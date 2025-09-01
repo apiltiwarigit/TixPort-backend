@@ -11,11 +11,12 @@ class TicketEvolutionService {
     this.timeout = config.ticketEvolution.timeout;
     this.useMockData = config.ticketEvolution.useMockData;
     
-    // If no API token, use mock data
+    // If no API token, log warning
     if (this.useMockData) {
-      console.log('🎭 Using Mock Data Service (No API Token Provided)');
-      console.log('💡 To use sandbox data, get free sandbox credentials from Ticket Evolution');
+      console.log('⚠️  No API Token Provided - API calls will fail');
+      console.log('💡 To use Ticket Evolution API, get free sandbox credentials');
       console.log('🔗 Visit: https://ticketevolution.com/developers');
+      console.log('🔧 Set TICKET_EVOLUTION_API_TOKEN environment variable');
       return;
     }
     
@@ -97,9 +98,9 @@ class TicketEvolutionService {
 
   // Get events with filtering and pagination
   async getEvents(filters = {}, page = 1, limit = 20) {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.getEvents(filters, page, limit);
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -128,9 +129,9 @@ class TicketEvolutionService {
 
   // Get single event by ID
   async getEvent(eventId) {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.getEvent(eventId);
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -144,9 +145,9 @@ class TicketEvolutionService {
 
   // Get events by category
   async getEventsByCategory(categoryId, page = 1, limit = 20) {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.getEventsByCategory(categoryId, page, limit);
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -160,9 +161,9 @@ class TicketEvolutionService {
 
   // Search events
   async searchEvents(query, page = 1, limit = 20) {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.searchEvents(query, page, limit);
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -198,9 +199,9 @@ class TicketEvolutionService {
 
   // Get events by location
   async getEventsByLocation(city, state, page = 1, limit = 20) {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.getEventsByLocation(city, state, page, limit);
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -217,9 +218,9 @@ class TicketEvolutionService {
 
   // Get tickets for an event
   async getEventTickets(eventId, page = 1, limit = 20) {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.getEventTickets(eventId, page, limit);
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -247,9 +248,9 @@ class TicketEvolutionService {
 
   // Get categories
   async getCategories() {
-    // Use mock data if no API token
+    
     if (this.useMockData) {
-      return mockDataService.getCategories();
+      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
     }
 
     try {
@@ -305,9 +306,13 @@ class TicketEvolutionService {
 
   // Health check
   async healthCheck() {
-    // Use mock data if no API token
+    // If no API token, return unhealthy status
     if (this.useMockData) {
-      return mockDataService.healthCheck();
+      return { 
+        status: 'unhealthy', 
+        message: 'API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.',
+        mode: 'mock'
+      };
     }
 
     try {
