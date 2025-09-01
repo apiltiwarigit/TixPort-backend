@@ -1,11 +1,30 @@
 const axios = require('axios');
 const config = require('../config/config');
+const mockDataService = require('./mockDataService');
 
 class TicketEvolutionService {
   constructor() {
     this.baseURL = config.ticketEvolution.apiUrl;
     this.apiToken = config.ticketEvolution.apiToken;
+    this.apiSecret = config.ticketEvolution.apiSecret;
+    this.environment = config.ticketEvolution.environment;
     this.timeout = config.ticketEvolution.timeout;
+    this.useMockData = config.ticketEvolution.useMockData;
+    
+    // If no API token, use mock data
+    if (this.useMockData) {
+      console.log('🎭 Using Mock Data Service (No API Token Provided)');
+      console.log('💡 To use sandbox data, get free sandbox credentials from Ticket Evolution');
+      console.log('🔗 Visit: https://ticketevolution.com/developers');
+      return;
+    }
+    
+    console.log(`🎫 Using Ticket Evolution API (${this.environment.toUpperCase()} Environment)`);
+    console.log(`📡 API URL: ${this.baseURL}`);
+    
+    if (this.environment === 'sandbox') {
+      console.log('🧪 SANDBOX MODE: Perfect for development and testing!');
+    }
     
     // Create axios instance with default configuration
     this.client = axios.create({
@@ -78,6 +97,11 @@ class TicketEvolutionService {
 
   // Get events with filtering and pagination
   async getEvents(filters = {}, page = 1, limit = 20) {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.getEvents(filters, page, limit);
+    }
+
     try {
       const params = {
         page,
@@ -104,6 +128,11 @@ class TicketEvolutionService {
 
   // Get single event by ID
   async getEvent(eventId) {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.getEvent(eventId);
+    }
+
     try {
       const response = await this.client.get(`/events/${eventId}`);
       return response.data;
@@ -115,6 +144,11 @@ class TicketEvolutionService {
 
   // Get events by category
   async getEventsByCategory(categoryId, page = 1, limit = 20) {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.getEventsByCategory(categoryId, page, limit);
+    }
+
     try {
       const filters = { 'category.id': categoryId };
       return await this.getEvents(filters, page, limit);
@@ -126,6 +160,11 @@ class TicketEvolutionService {
 
   // Search events
   async searchEvents(query, page = 1, limit = 20) {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.searchEvents(query, page, limit);
+    }
+
     try {
       const filters = { q: query };
       return await this.getEvents(filters, page, limit);
@@ -159,6 +198,11 @@ class TicketEvolutionService {
 
   // Get events by location
   async getEventsByLocation(city, state, page = 1, limit = 20) {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.getEventsByLocation(city, state, page, limit);
+    }
+
     try {
       const filters = {};
       if (city) filters['venue.city'] = city;
@@ -173,6 +217,11 @@ class TicketEvolutionService {
 
   // Get tickets for an event
   async getEventTickets(eventId, page = 1, limit = 20) {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.getEventTickets(eventId, page, limit);
+    }
+
     try {
       const params = {
         page,
@@ -198,6 +247,11 @@ class TicketEvolutionService {
 
   // Get categories
   async getCategories() {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.getCategories();
+    }
+
     try {
       const response = await this.client.get('/categories');
       return response.data.categories || [];
@@ -251,6 +305,11 @@ class TicketEvolutionService {
 
   // Health check
   async healthCheck() {
+    // Use mock data if no API token
+    if (this.useMockData) {
+      return mockDataService.healthCheck();
+    }
+
     try {
       const response = await this.client.get('/categories', { 
         params: { per_page: 1 } 
@@ -258,12 +317,14 @@ class TicketEvolutionService {
       return { 
         status: 'healthy', 
         statusCode: response.status,
-        message: 'TicketEvolution API is accessible' 
+        message: 'TicketEvolution API is accessible',
+        mode: 'api'
       };
     } catch (error) {
       return { 
         status: 'unhealthy', 
-        message: error.message 
+        message: error.message,
+        mode: 'api'
       };
     }
   }

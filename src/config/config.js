@@ -8,9 +8,14 @@ module.exports = {
   // Ticket Evolution API Configuration
   ticketEvolution: {
     apiToken: process.env.TICKET_EVOLUTION_API_TOKEN,
-    apiUrl: process.env.TICKET_EVOLUTION_API_URL || 'https://api.ticketevolution.com/v9',
+    apiSecret: process.env.TICKET_EVOLUTION_API_SECRET,
+    // Use sandbox by default, production when explicitly set
+    apiUrl: process.env.TICKET_EVOLUTION_API_URL || 'https://api.sandbox.ticketevolution.com/v9',
+    environment: process.env.TICKET_EVOLUTION_ENV || 'sandbox', // sandbox or production
     timeout: 10000,
     retryAttempts: 3,
+    // Mock data fallback configuration
+    useMockData: !process.env.TICKET_EVOLUTION_API_TOKEN || process.env.TICKET_EVOLUTION_API_TOKEN === '', // Use mock only if no token
   },
   
   // Database Configuration

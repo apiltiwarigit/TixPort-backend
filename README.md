@@ -31,10 +31,18 @@ Backend API for TixPort ticket marketplace, built with Node.js, Express, and Tic
    ```env
    PORT=3001
    NODE_ENV=development
+   # Optional: Leave empty to use free tier with mock data
    TICKET_EVOLUTION_API_TOKEN=your_api_token_here
    TICKET_EVOLUTION_API_URL=https://api.ticketevolution.com/v9
    FRONTEND_URL=http://localhost:3000
    ```
+
+   **Development Options:**
+   - **Mock Data:** Leave API token empty - uses built-in mock data
+   - **Sandbox API:** Get free sandbox credentials - uses real API with test data
+   - **Production API:** Get production credentials - uses real live data
+   
+   **Recommended:** Use Sandbox API for development (free, no approval needed)
 
 3. **Start the development server:**
    ```bash
