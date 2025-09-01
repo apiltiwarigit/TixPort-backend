@@ -9,3 +9,4 @@ router.get('/event/:eventId', ticketsController.getEventTickets);
 router.get('/:ticketId', ticketsController.getTicket);
 
 module.exports = router;
+

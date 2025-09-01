@@ -24,3 +24,4 @@ router.get('/location', eventsController.getEventsByLocation);
 router.get('/:eventId', eventsController.getEvent);
 
 module.exports = router;
+

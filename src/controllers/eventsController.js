@@ -300,3 +300,4 @@ class EventsController {
 }
 
 module.exports = new EventsController();
+

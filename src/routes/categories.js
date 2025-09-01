@@ -9,3 +9,4 @@ router.get('/', categoriesController.getCategories);
 router.get('/popular', categoriesController.getPopularCategories);
 
 module.exports = router;
+
