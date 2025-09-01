@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+
+# Allow access to public assets
+Allow: /public/
