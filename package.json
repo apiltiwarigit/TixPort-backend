@@ -9,6 +9,7 @@
     "build": "npm run build:clean && npm run build:compile",
     "build:clean": "rimraf dist",
     "build:compile": "babel src -d dist",
+    "vercel-build": "echo 'Vercel build completed'",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint src/",
