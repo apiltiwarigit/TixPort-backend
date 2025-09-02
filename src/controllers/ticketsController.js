@@ -3,19 +3,32 @@ const ticketEvolutionService = require('../services/ticketEvolutionService');
 class TicketsController {
   // Get tickets for a specific event
   async getEventTickets(req, res) {
+    const requestId = Math.random().toString(36).substring(7);
+    const startTime = Date.now();
+
+    console.log('🎫 [REQUEST]', requestId, '- Event tickets API called');
+    console.log('   Event ID from params:', req.params.eventId);
+    console.log('   Client IP:', req.ip || req.connection.remoteAddress);
+    console.log('   Query params:', req.query);
+
     try {
       const { eventId } = req.params;
       const { page = 1, limit = 20 } = req.query;
 
       if (!eventId || isNaN(eventId)) {
+        console.log('❌ [VALIDATION]', requestId, '- Invalid event ID:', eventId);
         return res.status(400).json({
           success: false,
           message: 'Valid event ID is required',
+          requestId: requestId
         });
       }
 
       const pageNum = Math.max(1, parseInt(page));
       const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+
+      console.log('🎫 [REQUEST]', requestId, '- Fetching tickets for event:', eventId);
+      console.log('   Page:', pageNum, 'Limit:', limitNum);
 
       const result = await ticketEvolutionService.getEventTickets(
         parseInt(eventId),
@@ -23,17 +36,35 @@ class TicketsController {
         limitNum
       );
 
+      const processingTime = Date.now() - startTime;
+      console.log('✅ [RESPONSE]', requestId, '- Event tickets fetched successfully');
+      console.log('   Tickets returned:', result.tickets?.length || 0);
+      console.log('   Total available:', result.pagination?.total_entries || 0);
+      console.log('   Processing time:', processingTime + 'ms');
+
       res.json({
         success: true,
         data: result,
+        requestId: requestId
       });
+
+      const totalTime = Date.now() - startTime;
+      console.log('🏁 [REQUEST]', requestId, '- Request completed in', totalTime + 'ms');
+
     } catch (error) {
-      console.error(`Error in getEventTickets for event ${req.params.eventId}:`, error);
-      
-      if (error.message.includes('not found')) {
+      const totalTime = Date.now() - startTime;
+      console.error('❌ [ERROR]', requestId, '- Error in getEventTickets controller');
+      console.error('   Event ID:', req.params.eventId);
+      console.error('   Error type:', error.constructor.name);
+      console.error('   Error message:', error.message);
+      console.error('   Processing time before error:', totalTime + 'ms');
+
+      if (error.message.includes('not found') || error.message.includes('404')) {
+        console.log('📭 [ERROR]', requestId, '- Event not found or no tickets available');
         return res.status(404).json({
           success: false,
           message: 'Event not found or no tickets available',
+          requestId: requestId
         });
       }
 
@@ -41,6 +72,7 @@ class TicketsController {
         success: false,
         message: 'Failed to fetch event tickets',
         error: error.message,
+        requestId: requestId
       });
     }
   }
