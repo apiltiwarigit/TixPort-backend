@@ -211,18 +211,34 @@ class TicketEvolutionService {
 
       console.log('🔄 [PARAMS]', 'Input filters:', JSON.stringify(filters, null, 2));
 
-      // Only add filters if they exist
-      if (Object.keys(filters).length > 0) {
-        if (filters.category_id) apiParams.category_id = filters.category_id;
-        if (filters.venue_id) apiParams.venue_id = filters.venue_id;
-        if (filters.performer_id) apiParams.performer_id = filters.performer_id;
-        if (filters.q) apiParams.q = filters.q;
-        if (filters['occurs_at.gte']) apiParams['occurs_at.gte'] = filters['occurs_at.gte'];
-        if (filters['occurs_at.lte']) apiParams['occurs_at.lte'] = filters['occurs_at.lte'];
-      } else {
-        console.log('📋 [PARAMS]', 'No filters applied - fetching ALL events');
+      // Map filter parameters to API parameters
+      if (filters.category_id) {
+        apiParams.category_id = filters.category_id;
+        console.log('🎭 [PARAMS]', 'Category filter:', filters.category_id);
+      }
+      if (filters.venue_id) {
+        apiParams.venue_id = filters.venue_id;
+        console.log('🏟️ [PARAMS]', 'Venue filter:', filters.venue_id);
+      }
+      if (filters.performer_id) {
+        apiParams.performer_id = filters.performer_id;
+        console.log('🎤 [PARAMS]', 'Performer filter:', filters.performer_id);
+      }
+      if (filters.q) {
+        apiParams.q = filters.q;
+        console.log('🔍 [PARAMS]', 'Search query:', filters.q);
+      }
+      if (filters['occurs_at.gte']) {
+        apiParams['occurs_at.gte'] = filters['occurs_at.gte'];
+        console.log('📅 [PARAMS]', 'Date from:', filters['occurs_at.gte']);
+      }
+      if (filters['occurs_at.lte']) {
+        apiParams['occurs_at.lte'] = filters['occurs_at.lte'];
+        console.log('📅 [PARAMS]', 'Date to:', filters['occurs_at.lte']);
       }
 
+      const filterCount = Object.keys(apiParams).length - 2; // Subtract page and per_page
+      console.log('📊 [PARAMS]', 'Applied filters count:', filterCount);
       console.log('🔄 [PARAMS]', 'Final API params:', JSON.stringify(apiParams, null, 2));
 
       const params = apiParams;

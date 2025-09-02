@@ -36,40 +36,70 @@ class EventsController {
       console.log('   search:', search || 'none');
       console.log('   location:', location || 'none');
 
-      // Build filters object - TEMPORARILY DISABLE LOCATION FILTERING TO TEST API
+      // Build filters object - ENABLE LOCATION AND CATEGORY FILTERING
       const filters = {};
 
-      // FOR NOW: Disable all filters to get ALL events first
-      console.log('🔄 [TEMPORARY]', 'Disabled all filters to test API - getting ALL events');
+      console.log('🔄 [FILTERING]', 'Enabling location and category filtering');
 
-      // Uncomment below when ready to re-enable filtering:
-      /*
+      // Category filtering using TicketEvolution API format
       if (category) {
-        // Use category name directly (not ID) as TicketEvolution might expect names
-        filters.q = search ? `${search} ${category}` : category;
-        console.log('🎭 [CATEGORY]', 'Using category filter:', filters.q);
+        // Map common category names to TicketEvolution category IDs
+        const categoryMapping = {
+          'Concerts': '1', // Music/Concerts category
+          'Sports': '2',   // Sports category
+          'Theater': '3',  // Theater category
+          'Comedy': '4',   // Comedy category
+          'Music': '1',    // Alternative mapping
+          'Football': '2', // Alternative mapping
+          'Basketball': '2', // Alternative mapping
+          'Baseball': '2',   // Alternative mapping
+          'Hockey': '2'     // Alternative mapping
+        };
+
+        const categoryId = categoryMapping[category] || category;
+        filters.category_id = categoryId;
+        console.log('🎭 [CATEGORY]', 'Category:', category, '-> ID:', categoryId);
       }
 
-      if (venue) filters.venue_id = venue;
-      if (performer) filters.performer_id = performer;
+      // Venue and performer filtering
+      if (venue) {
+        filters.venue_id = venue;
+        console.log('🏟️ [VENUE]', 'Venue ID:', venue);
+      }
+      if (performer) {
+        filters.performer_id = performer;
+        console.log('🎤 [PERFORMER]', 'Performer ID:', performer);
+      }
 
-      // For location-based search - DISABLED FOR TESTING
+      // Location-based search using 'q' parameter
       if (city || state) {
-        console.log('🏙️ [LOCATION]', 'Location filtering DISABLED for testing');
-        console.log('   City:', city, 'State:', state);
-        // const locationQuery = [city, state].filter(Boolean).join(', ');
-        // filters.q = search ? `${search} ${locationQuery}` : locationQuery;
+        const locationParts = [];
+        if (city) locationParts.push(city);
+        if (state) locationParts.push(state);
+        const locationQuery = locationParts.join(', ');
+
+        if (search) {
+          // Combine search term with location
+          filters.q = `${search} ${locationQuery}`;
+          console.log('🔍 [SEARCH+LOCATION]', 'Combined query:', filters.q);
+        } else {
+          // Location-only search
+          filters.q = locationQuery;
+          console.log('📍 [LOCATION]', 'Location query:', filters.q);
+        }
       } else if (search) {
+        // Search-only query
         filters.q = search;
+        console.log('🔍 [SEARCH]', 'Search query:', filters.q);
       }
-      */
 
-      console.log('🎯 [FILTERS]', 'Final filters (should be empty for testing):', JSON.stringify(filters, null, 2));
+      console.log('🎯 [FILTERS]', 'Final filters:', JSON.stringify(filters, null, 2));
 
+      // Date filtering
       if (dateFrom) filters['occurs_at.gte'] = dateFrom;
       if (dateTo) filters['occurs_at.lte'] = dateTo;
 
-      // Handle location parsing if provided as "City, State" format
+      // Handle legacy location format if provided as "City, State" string
       if (location && !city && !state) {
         const locationParts = location.split(',').map(part => part.trim());
         if (locationParts.length >= 1) {
@@ -77,14 +107,14 @@ class EventsController {
           const parsedState = locationParts[1] || '';
           const locationQuery = [parsedCity, parsedState].filter(Boolean).join(', ');
 
-          // Add to existing search query or create new one
+          // Use the location as a search query
           if (filters.q) {
             filters.q += ` ${locationQuery}`;
           } else {
             filters.q = locationQuery;
           }
 
-          console.log('📍 [REQUEST]', requestId, '- Parsed location into search query:', filters.q);
+          console.log('📍 [LEGACY]', 'Parsed legacy location format:', location, '->', filters.q);
         }
       }
 
@@ -93,6 +123,21 @@ class EventsController {
 
       console.log('🎯 [REQUEST]', requestId, '- Final filters:', JSON.stringify(filters, null, 2));
       console.log('📄 [REQUEST]', requestId, '- Pagination: page', pageNum, 'limit', limitNum);
+
+      // Log summary of applied filters for debugging
+      const appliedFilters = [];
+      if (filters.category_id) appliedFilters.push(`Category: ${filters.category_id}`);
+      if (filters.venue_id) appliedFilters.push(`Venue: ${filters.venue_id}`);
+      if (filters.performer_id) appliedFilters.push(`Performer: ${filters.performer_id}`);
+      if (filters.q) appliedFilters.push(`Search: "${filters.q}"`);
+      if (filters['occurs_at.gte']) appliedFilters.push(`From: ${filters['occurs_at.gte']}`);
+      if (filters['occurs_at.lte']) appliedFilters.push(`To: ${filters['occurs_at.lte']}`);
+
+      if (appliedFilters.length > 0) {
+        console.log('✅ [FILTERS]', 'Applied filters:', appliedFilters.join(' | '));
+      } else {
+        console.log('📋 [FILTERS]', 'No filters applied - fetching ALL events');
+      }
 
       const result = await ticketEvolutionService.getEvents(filters, pageNum, limitNum);
 
