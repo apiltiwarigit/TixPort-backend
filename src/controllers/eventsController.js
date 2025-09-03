@@ -53,7 +53,7 @@ class EventsController {
 
       // Set radius for geolocation searches
       if (filters.ip || filters.lat || filters.postal_code || filters.city_state) {
-        filters.within = parseInt(within) || 25;
+        filters.within = parseInt(within) || 500;
       }
 
       // Date and time filters
