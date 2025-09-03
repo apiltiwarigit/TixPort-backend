@@ -14,8 +14,7 @@ module.exports = {
     environment: process.env.TICKET_EVOLUTION_ENV || 'sandbox', // sandbox or production
     timeout: 10000,
     retryAttempts: 3,
-    // Mock data fallback configuration
-    useMockData: !process.env.TICKET_EVOLUTION_API_TOKEN || process.env.TICKET_EVOLUTION_API_TOKEN === '', // Use mock only if no token
+
   },
   
   // Database Configuration

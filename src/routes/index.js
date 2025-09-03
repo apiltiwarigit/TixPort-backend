@@ -5,6 +5,7 @@ const router = express.Router();
 const eventsRoutes = require('./events');
 const ticketsRoutes = require('./tickets');
 const categoriesRoutes = require('./categories');
+const authRoutes = require('./auth');
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -20,6 +21,7 @@ router.get('/health', (req, res) => {
 router.use('/events', eventsRoutes);
 router.use('/tickets', ticketsRoutes);
 router.use('/categories', categoriesRoutes);
+router.use('/auth', authRoutes);
 
 // 404 handler for unknown API routes
 router.use('*', (req, res) => {

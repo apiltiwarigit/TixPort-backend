@@ -10,7 +10,7 @@ class EventsController {
       // Extract all supported parameters
       const {
         page = 1, limit = 20, name, venue_id, performer_id, primary_performer,
-        category_id, category_tree, q, fuzzy, occurs_at, updated_at,
+        category_id, category_slug, category_tree, q, fuzzy, occurs_at, updated_at,
         popularity_score, short_term_popularity_score, office_id,
         lat, lon, within = 25, ip, postal_code, city_state, country_code,
         only_with_tickets, only_with_available_tickets, only_discounted,
@@ -28,7 +28,26 @@ class EventsController {
         filters.performer_id = performer_id;
         if (primary_performer !== undefined) filters.primary_performer = primary_performer === 'true';
       }
-      if (category_id) filters.category_id = category_id;
+      
+      // Handle category filtering - support both ID and slug
+      if (category_id) {
+        filters.category_id = category_id;
+      } else if (category_slug) {
+        // Convert category slug to category ID using the ticketEvolution service
+        try {
+          const categoryId = await this.getCategoryIdFromSlug(category_slug);
+          if (categoryId) {
+            filters.category_id = categoryId;
+            console.log(`🏷️ [${requestId}] Mapped category slug "${category_slug}" to ID: ${categoryId}`);
+          } else {
+            console.warn(`⚠️ [${requestId}] Category slug "${category_slug}" not found, proceeding without category filter`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ [${requestId}] Failed to map category slug "${category_slug}":`, error.message);
+          // Continue without category filter rather than failing the request
+        }
+      }
+      
       if (category_tree !== undefined) filters.category_tree = category_tree === 'true';
 
       // Search and location
@@ -114,6 +133,27 @@ class EventsController {
         error: error.message,
         requestId
       });
+    }
+  }
+
+  // Helper method to convert category slug to category ID
+  async getCategoryIdFromSlug(slug) {
+    try {
+      const ticketEvolutionService = require('../services/ticketEvolutionService');
+      
+      // Get all categories from the API
+      const result = await ticketEvolutionService.getCategories();
+      
+      // Find category by slug
+      const category = result.categories.find(cat => {
+        const categorySlug = cat.name ? cat.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : `category-${cat.id}`;
+        return categorySlug === slug;
+      });
+      
+      return category ? category.id : null;
+    } catch (error) {
+      console.error('Error getting category ID from slug:', error.message);
+      throw error;
     }
   }
 }

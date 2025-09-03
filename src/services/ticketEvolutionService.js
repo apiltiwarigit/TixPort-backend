@@ -1,6 +1,5 @@
 const axios = require('axios');
 const config = require('../config/config');
-const mockDataService = require('./mockDataService');
 
 class TicketEvolutionService {
   constructor() {
@@ -9,11 +8,9 @@ class TicketEvolutionService {
     this.apiSecret = config.ticketEvolution.apiSecret;
     this.environment = config.ticketEvolution.environment;
     this.timeout = config.ticketEvolution.timeout;
-    this.useMockData = config.ticketEvolution.useMockData;
 
-    if (this.useMockData) {
-      console.log('⚠️ TicketEvolution: Using MOCK DATA mode');
-      return;
+    if (!this.apiToken) {
+      throw new Error('TICKET_EVOLUTION_API_TOKEN is required. Please set the environment variable.');
     }
 
     console.log(`🎫 TicketEvolution: ${this.environment.toUpperCase()} mode initialized`);
@@ -80,9 +77,6 @@ class TicketEvolutionService {
 
   // Get events with filtering and pagination
   async getEvents(filters = {}, page = 1, limit = 20) {
-    if (this.useMockData) {
-      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
-    }
 
     try {
       // Build API parameters
@@ -130,9 +124,6 @@ class TicketEvolutionService {
 
   // Get single event by ID
   async getEvent(eventId) {
-    if (this.useMockData) {
-      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
-    }
 
     try {
       const response = await this.client.get(`/events/${eventId}`);
@@ -147,9 +138,6 @@ class TicketEvolutionService {
 
   // Get tickets for an event
   async getEventTickets(eventId, page = 1, limit = 20) {
-    if (this.useMockData) {
-      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
-    }
 
     try {
       const params = { page, per_page: Math.min(limit, 100) };
@@ -170,17 +158,34 @@ class TicketEvolutionService {
     }
   }
 
-  // Get categories
-  async getCategories() {
-    if (this.useMockData) {
-      throw new Error('API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.');
-    }
-
+  // Get categories with pagination and proper error handling
+  async getCategories(page = 1, limit = 100) {
     try {
-      const response = await this.client.get('/categories');
-      return response.data.categories || [];
+      const params = {
+        page,
+        per_page: Math.min(limit, 100), // API limit is 100
+        order_by: 'name' // Sort alphabetically
+      };
+
+      console.log(`📂 Fetching categories: page ${page}, limit ${limit}`);
+      const response = await this.client.get('/categories', { params });
+
+      const categories = response.data.categories || [];
+      console.log(`✅ Fetched ${categories.length} categories from TicketEvolution API`);
+
+      return {
+        categories,
+        pagination: {
+          current_page: response.data.current_page || page,
+          per_page: response.data.per_page || limit,
+          total_entries: response.data.total_entries || 0,
+          total_pages: Math.ceil((response.data.total_entries || 0) / limit),
+        }
+      };
     } catch (error) {
       console.error('❌ getCategories error:', error.message);
+      console.error('   Status:', error.response?.status);
+      console.error('   Data:', error.response?.data);
       throw error;
     }
   }
@@ -229,15 +234,6 @@ class TicketEvolutionService {
 
   // Health check
   async healthCheck() {
-    if (this.useMockData) {
-      return {
-        status: 'unhealthy',
-        message: 'API token not configured. Please set TICKET_EVOLUTION_API_TOKEN environment variable.',
-        mode: 'mock',
-        timestamp: new Date().toISOString()
-      };
-    }
-
     try {
       const startTime = Date.now();
       const response = await this.client.get('/categories', { params: { per_page: 1 } });
