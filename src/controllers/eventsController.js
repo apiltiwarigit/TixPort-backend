@@ -12,7 +12,7 @@ class EventsController {
         page = 1, limit = 20, name, venue_id, performer_id, primary_performer,
         category_id, category_slug, category_tree, q, fuzzy, occurs_at, updated_at,
         popularity_score, short_term_popularity_score, office_id,
-        lat, lon, within = 25, ip, postal_code, city_state, country_code,
+        lat, lon, within = 60, ip, postal_code, city_state, country_code,
         only_with_tickets, only_with_available_tickets, only_discounted,
         by_time, order_by, minPrice, maxPrice
       } = req.query;
@@ -72,7 +72,7 @@ class EventsController {
 
       // Set radius for geolocation searches
       if (filters.ip || filters.lat || filters.postal_code || filters.city_state) {
-        filters.within = parseInt(within) || 500;
+        filters.within = parseInt(within) || 60;
       }
 
       // Date and time filters
@@ -144,10 +144,10 @@ class EventsController {
       // Get all categories from the API
       const result = await ticketEvolutionService.getCategories();
       
-      // Find category by slug
+      // Find category by slug (case-insensitive)
       const category = result.categories.find(cat => {
         const categorySlug = cat.name ? cat.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : `category-${cat.id}`;
-        return categorySlug === slug;
+        return categorySlug === slug.toLowerCase();
       });
       
       return category ? category.id : null;
