@@ -79,16 +79,23 @@ class CategoriesController {
   async getCategoryEvents(req, res) {
     try {
       const { id } = req.params;
-      
-      // Simply modify the request query to include category_id and call existing getEvents
-      req.query.category_id = id;
-      req.query.only_with_available_tickets = true;
-      req.query.category_tree = req.query.category_tree || 'false'; // Don't include sub-categories by default
-      
+
+      // Handle "all" parameter to show all events without category filter
+      if (id === 'all') {
+        // Remove any category filtering to get all events
+        delete req.query.category_id;
+        req.query.only_with_available_tickets = true;
+      } else {
+        // For specific categories, apply the category filter
+        req.query.category_id = id;
+        req.query.only_with_available_tickets = true;
+        req.query.category_tree = req.query.category_tree || 'false'; // Don't include sub-categories by default
+      }
+
       // Use the existing events controller directly
       const eventsController = require('./eventsController');
       await eventsController.getEvents(req, res);
-      
+
     } catch (error) {
       console.error('Error fetching category events:', error.message);
       res.status(503).json({
