@@ -46,8 +46,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static files from public directory
 app.use(express.static('public'));
 
-// Rate limiting
-app.use('/api', apiLimiter);
+// Rate limiting - disabled in development to prevent conflicts with external API rate limits
+if (config.nodeEnv !== 'development') {
+  app.use('/api', apiLimiter);
+} else {
+  console.log('⚡ Development mode: Rate limiting disabled for easier API testing');
+}
 
 // Health check endpoint (before other routes)
 app.get('/health', async (req, res) => {
