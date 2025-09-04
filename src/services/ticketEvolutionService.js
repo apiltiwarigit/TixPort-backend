@@ -224,6 +224,184 @@ class TicketEvolutionService {
     }
   }
 
+  // Get ticket groups for an event (for seatmap)
+  async getEventTicketGroups(eventId, page = 1, limit = 100) {
+    try {
+      // Check cache first
+      const cacheKey = this.getCacheKey(`ticket-groups-${eventId}`, { page, limit });
+      const cachedResponse = this.getCachedResponse(cacheKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      const params = { 
+        page, 
+        per_page: Math.min(limit, 100),
+        event_id: eventId,
+        state: 'available', // Only get available tickets
+        include_tevo_section_mappings: true, // Include TEvo Section Mappings for seatmaps-client
+        lightweight: false // Get detailed information needed for seatmap
+      };
+      
+      console.log(`🎯 Fetching ticket groups for event ${eventId}:`, params);
+      const response = await this.client.get(`/ticket_groups`, { params });
+
+      // Log the full response to see if it contains configuration data
+      console.log(`📋 Ticket groups response structure:`, {
+        hasTicketGroups: !!response.data.ticket_groups,
+        ticketGroupsCount: response.data.ticket_groups?.length || 0,
+        hasConfiguration: !!response.data.configuration,
+        hasConfigurationId: !!response.data.configuration_id,
+        hasVenueConfiguration: !!response.data.venue_configuration,
+        responseKeys: Object.keys(response.data)
+      });
+
+      const result = {
+        ticketGroups: response.data.ticket_groups || [],
+        configurationId: response.data.configuration_id || response.data.configuration?.id || null,
+        pagination: {
+          current_page: response.data.current_page || page,
+          per_page: response.data.per_page || limit,
+          total_entries: response.data.total_entries || 0,
+          total_pages: Math.ceil((response.data.total_entries || 0) / limit),
+        },
+      };
+
+      // Cache the response
+      this.setCachedResponse(cacheKey, result);
+      
+      console.log(`✅ Retrieved ${result.ticketGroups.length} ticket groups for event ${eventId}`);
+      return result;
+    } catch (error) {
+      console.error('❌ getEventTicketGroups error:', error.message);
+      throw error;
+    }
+  }
+
+  // Get seatmap data for an event (venue and configuration info)
+  async getEventSeatmapData(eventId) {
+    try {
+      // Check cache first
+      const cacheKey = this.getCacheKey(`seatmap-${eventId}`, {});
+      const cachedResponse = this.getCachedResponse(cacheKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      console.log(`🗺️ Fetching seatmap data for event ${eventId}`);
+      
+      // First get the event details to get venue information
+      const eventResponse = await this.client.get(`/events/${eventId}`);
+      const event = eventResponse.data;
+
+      if (!event || !event.venue) {
+        throw new Error('Event or venue information not found');
+      }
+
+      const venue = event.venue;
+      
+      // Try to get configuration ID from ticket groups first (more reliable)
+      let configurationId = null;
+      try {
+        console.log(`🎫 Trying to get configuration from ticket groups for event ${eventId}`);
+        const ticketGroupsResponse = await this.getEventTicketGroups(eventId, 1, 1);
+        if (ticketGroupsResponse.configurationId) {
+          configurationId = ticketGroupsResponse.configurationId;
+          console.log(`✅ Found configuration ID from ticket groups: ${configurationId}`);
+        }
+      } catch (ticketGroupsError) {
+        console.log('⚠️ Could not get configuration from ticket groups:', ticketGroupsError.message);
+      }
+      
+      // If we didn't get configuration from ticket groups, try venue details
+      if (!configurationId) {
+        console.log('🔍 Configuration not found in ticket groups, trying venue details...');
+        
+        // Get venue details if needed (contains configuration info)
+        let venueDetails = venue;
+        if (!venue.configurations) {
+          try {
+            console.log(`🏟️ Fetching detailed venue info for venue ${venue.id}`);
+            const venueResponse = await this.client.get(`/venues/${venue.id}`);
+            venueDetails = venueResponse.data;
+            console.log(`🏟️ Venue details response:`, {
+              id: venueDetails.id,
+              name: venueDetails.name,
+              hasConfigurations: !!venueDetails.configurations,
+              configurationsCount: venueDetails.configurations?.length || 0,
+              configurations: venueDetails.configurations
+            });
+          } catch (venueError) {
+            console.log('⚠️ Could not fetch detailed venue info, using basic venue data:', venueError.message);
+          }
+        }
+
+        // Find the appropriate configuration for this event
+        if (venueDetails.configurations && venueDetails.configurations.length > 0) {
+          // For now, use the first available configuration
+          // In a real implementation, you might need logic to determine the correct configuration
+          configurationId = venueDetails.configurations[0].id;
+          console.log(`🎯 Using configuration ${configurationId} for venue ${venue.id}`);
+        } else {
+          console.log('⚠️ No configurations found in venue details, trying alternative approaches...');
+          
+          // Try to get configurations from a different endpoint or field
+          try {
+            // Some venues might have seatmap configurations in a different field
+            if (venueDetails.seatmap_configurations) {
+              configurationId = venueDetails.seatmap_configurations[0]?.id;
+              console.log(`🎯 Found seatmap configuration: ${configurationId}`);
+            } else if (venueDetails.default_configuration_id) {
+              configurationId = venueDetails.default_configuration_id;
+              console.log(`🎯 Using default configuration: ${configurationId}`);
+            } else {
+              // Try to fetch configurations from a dedicated endpoint
+              console.log(`🔍 Trying to fetch configurations from /venues/${venue.id}/configurations`);
+              const configResponse = await this.client.get(`/venues/${venue.id}/configurations`);
+              if (configResponse.data && configResponse.data.length > 0) {
+                configurationId = configResponse.data[0].id;
+                console.log(`🎯 Found configuration via dedicated endpoint: ${configurationId}`);
+              }
+            }
+          } catch (configError) {
+            console.log('⚠️ Could not find configuration via alternative methods:', configError.message);
+          }
+          
+          if (!configurationId) {
+            console.log('❌ No configurations found for venue, seatmap will not be available');
+          }
+        }
+      }
+
+      const result = {
+        venueId: venue.id.toString(),
+        configurationId: configurationId ? configurationId.toString() : null,
+        venueName: venue.name,
+        venueCity: venue.city,
+        venueState: venue.state,
+        event: {
+          id: event.id,
+          name: event.name,
+          occurs_at: event.occurs_at
+        }
+      };
+
+      // Cache the response for longer since venue configuration doesn't change often
+      if (this.cacheTimeout > 0) {
+        this.requestCache.set(cacheKey, {
+          data: result,
+          timestamp: Date.now()
+        });
+      }
+
+      console.log(`✅ Retrieved seatmap data for event ${eventId}: venue ${result.venueId}, config ${result.configurationId}`);
+      return result;
+    } catch (error) {
+      console.error('❌ getEventSeatmapData error:', error.message);
+      throw error;
+    }
+  }
+
   // Get categories with pagination and proper error handling
   async getCategories(page = 1, limit = 100) {
     try {

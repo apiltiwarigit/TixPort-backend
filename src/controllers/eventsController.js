@@ -136,6 +136,54 @@ class EventsController {
     }
   }
 
+  // Get single event by ID
+  async getSingleEvent(req, res) {
+    const requestId = Math.random().toString(36).substring(7);
+    const startTime = Date.now();
+
+    try {
+      const { eventId } = req.params;
+
+      if (!eventId || isNaN(eventId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid event ID is required',
+          requestId
+        });
+      }
+
+      console.log(`[REQUEST ${requestId}] Single event API called for ID: ${eventId}`);
+
+      const event = await ticketEvolutionService.getEvent(parseInt(eventId));
+
+      res.json({
+        success: true,
+        data: event,
+        requestId
+      });
+
+      console.log(`[REQUEST ${requestId}] Completed in ${Date.now() - startTime}ms - Event "${event.name}" returned`);
+
+    } catch (error) {
+      console.error(`[REQUEST ${requestId}] Error in getSingleEvent:`, error.message);
+      
+      if (error.message.includes('not found') || error.message.includes('404')) {
+        return res.status(404).json({
+          success: false,
+          message: 'Event not found',
+          requestId
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch event',
+        error: error.message,
+        requestId
+      });
+    }
+  }
+
   // Helper method to convert category slug to category ID
   async getCategoryIdFromSlug(slug) {
     try {
