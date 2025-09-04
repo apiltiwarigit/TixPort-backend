@@ -14,7 +14,10 @@ module.exports = {
     environment: process.env.TICKET_EVOLUTION_ENV || 'sandbox', // sandbox or production
     timeout: 10000,
     retryAttempts: 3,
-
+    // Stripe keys for Affiliate checkout (TEvo managed)
+    stripePublishableKey: process.env.TICKET_EVOLUTION_ENV === 'production' 
+      ? 'pk_live_471dRMEW3mEgBGUy9u2kyLDB' 
+      : 'pk_test_WmbjeQFOTJM5Sb5PQvYXBM07',
   },
   
   // Database Configuration

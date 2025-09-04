@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const config = require('../config/config');
 
 class TicketEvolutionService {
@@ -456,6 +457,107 @@ class TicketEvolutionService {
       };
     } catch (error) {
       console.error('❌ getVenues error:', error.message);
+      throw error;
+    }
+  }
+
+  // Generate signature for authenticated endpoints (like v10 orders)
+  generateSignature(method, path, body = '') {
+    if (!this.apiSecret) {
+      throw new Error('API secret is required for authenticated endpoints');
+    }
+    const message = [method.toUpperCase(), path, body].join(':');
+    return crypto.createHmac('sha256', this.apiSecret).update(message).digest('base64');
+  }
+
+  // Create authenticated request for TEvo orders
+  async authenticatedRequest(method, path, data = null) {
+    const body = data ? JSON.stringify(data) : '';
+    const signature = this.generateSignature(method, path, body);
+    
+    const config = {
+      method: method.toLowerCase(),
+      url: `${this.baseURL}${path}`,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Token': this.apiToken,
+        'X-Signature': signature,
+        'Accept': 'application/vnd.ticketevolution.api+json; version=10',
+      },
+      timeout: this.timeout,
+    };
+
+    if (data) {
+      config.data = data;
+    }
+
+    try {
+      const response = await axios(config);
+      return response.data;
+    } catch (error) {
+      console.error('❌ TEvo authenticated request error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
+  // Create Ticket Evolution order (Affiliate checkout)
+  async createOrder(orderData) {
+    try {
+      console.log('🛒 Creating TEvo order:', JSON.stringify(orderData, null, 2));
+      
+      const response = await this.authenticatedRequest('POST', '/v10/orders', orderData);
+      
+      console.log('✅ Order created successfully:', response.order?.id);
+      return response;
+    } catch (error) {
+      console.error('❌ createOrder error:', error.message);
+      throw error;
+    }
+  }
+
+  // Create or get TEvo client for buyer
+  async createClient(clientData) {
+    try {
+      console.log('👤 Creating TEvo client:', clientData);
+      
+      const response = await this.client.post('/clients', { client: clientData });
+      
+      console.log('✅ Client created:', response.data.client?.id);
+      return response.data.client;
+    } catch (error) {
+      console.error('❌ createClient error:', error.message);
+      throw error;
+    }
+  }
+
+  // Get shipping suggestions for delivery options
+  async getShippingSuggestions(eventId, zipCode) {
+    try {
+      const params = {
+        event_id: eventId,
+        zip_code: zipCode,
+      };
+      
+      const response = await this.client.get('/shipments/suggestions', { params });
+      
+      return response.data.suggestions || [];
+    } catch (error) {
+      console.error('❌ getShippingSuggestions error:', error.message);
+      throw error;
+    }
+  }
+
+  // Create tax quote for order calculation
+  async createTaxQuote(taxData) {
+    try {
+      console.log('💰 Creating tax quote:', taxData);
+      
+      const response = await this.client.post('/tax_quotes', { tax_quote: taxData });
+      
+      console.log('✅ Tax quote created:', response.data.tax_quote?.signature);
+      return response.data.tax_quote;
+    } catch (error) {
+      console.error('❌ createTaxQuote error:', error.message);
       throw error;
     }
   }
