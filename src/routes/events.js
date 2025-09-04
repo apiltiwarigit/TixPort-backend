@@ -8,5 +8,8 @@ router.get('/', eventsController.getEvents);
 // GET /api/events/:eventId - Get single event by ID
 router.get('/:eventId', eventsController.getSingleEvent);
 
+// POST /api/events/clear-cache - Clear cache for debugging
+router.post('/clear-cache', eventsController.clearCache);
+
 module.exports = router;
 

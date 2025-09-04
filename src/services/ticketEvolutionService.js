@@ -81,7 +81,49 @@ class TicketEvolutionService {
 
   // Cache helper methods
   getCacheKey(endpoint, params) {
-    return `${endpoint}:${JSON.stringify(params)}`;
+    // Create a deterministic cache key by sorting and normalizing the parameters
+    const normalizedParams = this.normalizeParams(params);
+    return `${endpoint}:${JSON.stringify(normalizedParams)}`;
+  }
+
+  // Normalize parameters to ensure consistent cache keys
+  normalizeParams(params) {
+    if (!params || typeof params !== 'object') return params;
+    
+    const normalized = {};
+    
+    // Sort keys to ensure consistent ordering
+    const sortedKeys = Object.keys(params).sort();
+    
+    for (const key of sortedKeys) {
+      const value = params[key];
+      
+      // Handle nested objects (like filters)
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        normalized[key] = this.normalizeParams(value);
+      } else {
+        // Normalize primitive values
+        if (typeof value === 'string') {
+          const trimmed = value.trim();
+          // Convert string booleans to actual booleans
+          if (trimmed === 'true') {
+            normalized[key] = true;
+          } else if (trimmed === 'false') {
+            normalized[key] = false;
+          } else {
+            normalized[key] = trimmed;
+          }
+        } else if (typeof value === 'number' && !isNaN(value)) {
+          normalized[key] = Number(value);
+        } else if (typeof value === 'boolean') {
+          normalized[key] = Boolean(value);
+        } else {
+          normalized[key] = value;
+        }
+      }
+    }
+    
+    return normalized;
   }
 
   getCachedResponse(cacheKey) {
@@ -108,6 +150,25 @@ class TicketEvolutionService {
     });
 
     console.log(`💾 Cached response for: ${cacheKey}`);
+  }
+
+  // Clear cache for debugging or when cache issues occur
+  clearCache(pattern = null) {
+    if (pattern) {
+      // Clear cache entries matching a pattern
+      const keysToDelete = [];
+      for (const key of this.requestCache.keys()) {
+        if (key.includes(pattern)) {
+          keysToDelete.push(key);
+        }
+      }
+      keysToDelete.forEach(key => this.requestCache.delete(key));
+      console.log(`🧹 Cleared ${keysToDelete.length} cache entries matching pattern: ${pattern}`);
+    } else {
+      // Clear all cache
+      this.requestCache.clear();
+      console.log(`🧹 Cleared all cache entries`);
+    }
   }
 
   // Error handler

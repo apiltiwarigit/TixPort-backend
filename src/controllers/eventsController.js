@@ -204,6 +204,29 @@ class EventsController {
       throw error;
     }
   }
+
+  // Clear cache endpoint for debugging
+  async clearCache(req, res) {
+    try {
+      const { pattern } = req.query;
+      const ticketEvolutionService = require('../services/ticketEvolutionService');
+      
+      ticketEvolutionService.clearCache(pattern);
+      
+      res.json({
+        success: true,
+        message: pattern ? `Cache cleared for pattern: ${pattern}` : 'All cache cleared',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error clearing cache:', error.message);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to clear cache',
+        error: error.message
+      });
+    }
+  }
 }
 
 module.exports = new EventsController();
