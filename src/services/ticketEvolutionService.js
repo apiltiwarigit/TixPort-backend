@@ -258,7 +258,7 @@ class TicketEvolutionService {
 
       const result = {
         ticketGroups: response.data.ticket_groups || [],
-        configurationId: response.data.configuration_id || response.data.configuration?.id || null,
+        configurationId: response.data.configuration_id || response.data.configuration?.id || response.data.venue_configuration?.id || null,
         pagination: {
           current_page: response.data.current_page || page,
           per_page: response.data.per_page || limit,
@@ -289,96 +289,68 @@ class TicketEvolutionService {
       }
 
       console.log(`🗺️ Fetching seatmap data for event ${eventId}`);
-      
-      // First get the event details to get venue information
+
+      // Get the event details to extract venue and configuration information
       const eventResponse = await this.client.get(`/events/${eventId}`);
       const event = eventResponse.data;
 
-      if (!event || !event.venue) {
-        throw new Error('Event or venue information not found');
+      if (!event) {
+        throw new Error('Event not found');
       }
 
-      const venue = event.venue;
-      
-      // Try to get configuration ID from ticket groups first (more reliable)
-      let configurationId = null;
-      try {
-        console.log(`🎫 Trying to get configuration from ticket groups for event ${eventId}`);
-        const ticketGroupsResponse = await this.getEventTicketGroups(eventId, 1, 1);
-        if (ticketGroupsResponse.configurationId) {
-          configurationId = ticketGroupsResponse.configurationId;
-          console.log(`✅ Found configuration ID from ticket groups: ${configurationId}`);
-        }
-      } catch (ticketGroupsError) {
-        console.log('⚠️ Could not get configuration from ticket groups:', ticketGroupsError.message);
+      // Extract venueId and configurationId directly from the event response
+      const venueId = event.venue?.id;
+      const configurationId = event.configuration?.id;
+
+      console.log(`📋 Event data structure:`, {
+        hasVenue: !!event.venue,
+        venueId: venueId,
+        hasConfiguration: !!event.configuration,
+        configurationId: configurationId,
+        eventKeys: Object.keys(event)
+      });
+
+      if (!venueId) {
+        throw new Error('Venue information not found in event data');
       }
-      
-      // If we didn't get configuration from ticket groups, try venue details
+
       if (!configurationId) {
-        console.log('🔍 Configuration not found in ticket groups, trying venue details...');
-        
-        // Get venue details if needed (contains configuration info)
-        let venueDetails = venue;
-        if (!venue.configurations) {
-          try {
-            console.log(`🏟️ Fetching detailed venue info for venue ${venue.id}`);
-            const venueResponse = await this.client.get(`/venues/${venue.id}`);
-            venueDetails = venueResponse.data;
-            console.log(`🏟️ Venue details response:`, {
-              id: venueDetails.id,
-              name: venueDetails.name,
-              hasConfigurations: !!venueDetails.configurations,
-              configurationsCount: venueDetails.configurations?.length || 0,
-              configurations: venueDetails.configurations
-            });
-          } catch (venueError) {
-            console.log('⚠️ Could not fetch detailed venue info, using basic venue data:', venueError.message);
+        console.log('⚠️ Configuration ID not found in event, trying alternative methods...');
+
+        // Try to get configuration from ticket groups as fallback
+        try {
+          const ticketGroupsResponse = await this.getEventTicketGroups(eventId, 1, 1);
+          if (ticketGroupsResponse.configurationId) {
+            console.log(`✅ Found configuration ID from ticket groups: ${ticketGroupsResponse.configurationId}`);
+            configurationId = ticketGroupsResponse.configurationId;
           }
+        } catch (ticketGroupsError) {
+          console.log('⚠️ Could not get configuration from ticket groups:', ticketGroupsError.message);
         }
 
-        // Find the appropriate configuration for this event
-        if (venueDetails.configurations && venueDetails.configurations.length > 0) {
-          // For now, use the first available configuration
-          // In a real implementation, you might need logic to determine the correct configuration
-          configurationId = venueDetails.configurations[0].id;
-          console.log(`🎯 Using configuration ${configurationId} for venue ${venue.id}`);
-        } else {
-          console.log('⚠️ No configurations found in venue details, trying alternative approaches...');
-          
-          // Try to get configurations from a different endpoint or field
+        // If still no configuration, try venue configurations
+        if (!configurationId) {
           try {
-            // Some venues might have seatmap configurations in a different field
-            if (venueDetails.seatmap_configurations) {
-              configurationId = venueDetails.seatmap_configurations[0]?.id;
-              console.log(`🎯 Found seatmap configuration: ${configurationId}`);
-            } else if (venueDetails.default_configuration_id) {
-              configurationId = venueDetails.default_configuration_id;
-              console.log(`🎯 Using default configuration: ${configurationId}`);
-            } else {
-              // Try to fetch configurations from a dedicated endpoint
-              console.log(`🔍 Trying to fetch configurations from /venues/${venue.id}/configurations`);
-              const configResponse = await this.client.get(`/venues/${venue.id}/configurations`);
-              if (configResponse.data && configResponse.data.length > 0) {
-                configurationId = configResponse.data[0].id;
-                console.log(`🎯 Found configuration via dedicated endpoint: ${configurationId}`);
-              }
+            console.log(`🏟️ Fetching venue configurations for venue ${venueId}`);
+            const venueResponse = await this.client.get(`/venues/${venueId}`);
+            const venueDetails = venueResponse.data;
+
+            if (venueDetails.configurations && venueDetails.configurations.length > 0) {
+              configurationId = venueDetails.configurations[0].id;
+              console.log(`🎯 Found configuration from venue: ${configurationId}`);
             }
-          } catch (configError) {
-            console.log('⚠️ Could not find configuration via alternative methods:', configError.message);
-          }
-          
-          if (!configurationId) {
-            console.log('❌ No configurations found for venue, seatmap will not be available');
+          } catch (venueError) {
+            console.log('⚠️ Could not fetch venue configurations:', venueError.message);
           }
         }
       }
 
       const result = {
-        venueId: venue.id.toString(),
+        venueId: venueId.toString(),
         configurationId: configurationId ? configurationId.toString() : null,
-        venueName: venue.name,
-        venueCity: venue.city,
-        venueState: venue.state,
+        venueName: event.venue?.name || 'Unknown Venue',
+        venueCity: event.venue?.city,
+        venueState: event.venue?.state,
         event: {
           id: event.id,
           name: event.name,
