@@ -40,6 +40,7 @@ const errorHandler = (err, req, res, next) => {
     return res.status(401).json({
       success: false,
       message: 'Invalid token',
+      code: 'INVALID_TOKEN'
     });
   }
 
@@ -47,6 +48,25 @@ const errorHandler = (err, req, res, next) => {
     return res.status(401).json({
       success: false,
       message: 'Token expired',
+      code: 'TOKEN_EXPIRED'
+    });
+  }
+
+  // Supabase auth errors
+  if (err.message?.includes('JWT') || err.message?.includes('token')) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication error',
+      code: 'AUTH_ERROR'
+    });
+  }
+
+  // Network/database connection errors - don't crash the server
+  if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.message?.includes('connect')) {
+    return res.status(503).json({
+      success: false,
+      message: 'Service temporarily unavailable',
+      code: 'SERVICE_UNAVAILABLE'
     });
   }
 

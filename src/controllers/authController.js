@@ -308,7 +308,7 @@ class AuthController {
       }
 
       const user = await supabaseService.verifyToken(token);
-      
+
       if (!user) {
         return res.status(401).json({
           success: false,
@@ -318,7 +318,12 @@ class AuthController {
       }
 
       // Get profile if exists
-      const profile = await supabaseService.getUserProfile(user.id);
+      let profile = null;
+      try {
+        profile = await supabaseService.getUserProfile(user.id);
+      } catch (profileError) {
+        console.warn('Profile fetch failed in verifyAuth (non-critical):', profileError.message);
+      }
 
       res.json({
         success: true,
@@ -340,13 +345,60 @@ class AuthController {
   }
 
   /**
-   * Refresh user session (client handles token refresh)
+   * Refresh user session using refresh token
    */
   async refreshSession(req, res) {
     try {
-      // The actual token refresh is handled by Supabase client
-      // This endpoint just verifies the new token
-      return this.verifyAuth(req, res);
+      const authHeader = req.headers.authorization;
+      const refreshToken = authHeader && authHeader.split(' ')[1];
+
+      if (!refreshToken) {
+        return res.status(401).json({
+          success: false,
+          message: 'Refresh token required',
+          code: 'NO_REFRESH_TOKEN'
+        });
+      }
+
+      // Use Supabase to refresh the session
+      const { data, error } = await supabaseService.anonClient.auth.refreshSession({
+        refresh_token: refreshToken
+      });
+
+      if (error) {
+        console.error('Refresh token error:', error);
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid refresh token',
+          code: 'INVALID_REFRESH_TOKEN'
+        });
+      }
+
+      if (!data.session || !data.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Session refresh failed',
+          code: 'REFRESH_FAILED'
+        });
+      }
+
+      // Get user profile if available
+      let profile = null;
+      try {
+        profile = await supabaseService.getUserProfile(data.user.id);
+      } catch (profileError) {
+        console.warn('Profile fetch failed during refresh (non-critical):', profileError.message);
+      }
+
+      res.json({
+        success: true,
+        data: {
+          user: data.user,
+          session: data.session,
+          profile
+        }
+      });
+
     } catch (error) {
       console.error('Error in refreshSession:', error);
       res.status(500).json({

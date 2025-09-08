@@ -18,7 +18,7 @@ const authenticateToken = async (req, res, next) => {
 
     // Verify token with Supabase
     const user = await supabaseService.verifyToken(token);
-    
+
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -34,6 +34,17 @@ const authenticateToken = async (req, res, next) => {
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);
+
+    // If it's a network/database error, return service unavailable
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' ||
+        error.message?.includes('connect') || error.message?.includes('timeout')) {
+      return res.status(503).json({
+        success: false,
+        message: 'Authentication service temporarily unavailable',
+        code: 'SERVICE_UNAVAILABLE'
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Authentication error',
@@ -51,10 +62,15 @@ const optionalAuth = async (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1];
 
     if (token) {
-      const user = await supabaseService.verifyToken(token);
-      if (user) {
-        req.user = user;
-        req.userId = user.id;
+      try {
+        const user = await supabaseService.verifyToken(token);
+        if (user) {
+          req.user = user;
+          req.userId = user.id;
+        }
+      } catch (tokenError) {
+        // Log token verification errors but don't fail the request
+        console.warn('Optional auth token verification failed:', tokenError.message);
       }
     }
 

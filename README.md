@@ -1,4 +1,38 @@
-# TixPort Backend API
+# TixPort Backend
+
+## Session Persistence Fix
+
+This backend has been updated to fix session persistence issues when the backend crashes or experiences temporary outages.
+
+### Key Improvements:
+
+1. **Automatic Token Refresh**: The frontend now automatically refreshes expired tokens using refresh tokens
+2. **Resilient Authentication**: Authentication middleware handles network errors gracefully
+3. **Session Recovery**: Sessions are preserved across backend restarts and temporary outages
+4. **Better Error Handling**: Network and database errors don't crash authentication
+
+### How It Works:
+
+- **Frontend**: Stores session in localStorage with automatic token refresh
+- **Backend**: Implements proper refresh token logic with Supabase
+- **API Interceptors**: Automatically handle 401 errors by refreshing tokens
+- **Error Recovery**: Network issues don't force logout
+
+### Testing the Fix:
+
+1. Start the backend server
+2. Login to the frontend
+3. Stop the backend server (simulate crash)
+4. Restart the backend server
+5. Refresh the frontend - you should remain logged in
+6. Try making API calls - they should work with automatic token refresh
+
+### Environment Variables:
+
+Make sure these are set in your `.env` file:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` API
 
 Backend API for TixPort ticket marketplace, built with Node.js, Express, and TicketEvolution API integration.
 
