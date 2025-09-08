@@ -17,6 +17,10 @@ class SupabaseService {
       }
     });
 
+    // Alias for clarity in code that expects an admin client
+    // This uses the service-role key and bypasses RLS as intended for server-side ops
+    this.adminClient = this.supabase;
+
     // Create anon client for token verification
     this.anonClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY);
   }

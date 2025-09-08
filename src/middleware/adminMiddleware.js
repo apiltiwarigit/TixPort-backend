@@ -67,12 +67,7 @@ async function requireOwner(req, res, next) {
       });
     }
 
-    // Check if user is the hardcoded owner or has owner role
-    const user = req.user;
-    if (user && user.email === 'twriapil@gmail.com') {
-      req.userRole = 'owner';
-      return next();
-    }
+    // Check user role in database
 
     // Check user role in database
     const { data: userRole, error } = await supabaseService.adminClient
@@ -122,12 +117,6 @@ async function getUserRole(req, res, next) {
       return next();
     }
 
-    // Check if user is the hardcoded owner
-    const user = req.user;
-    if (user && user.email === 'twriapil@gmail.com') {
-      req.userRole = 'owner';
-      return next();
-    }
 
     // Check user role in database
     const { data: userRole, error } = await supabaseService.adminClient

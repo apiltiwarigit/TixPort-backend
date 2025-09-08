@@ -357,9 +357,9 @@ DROP POLICY IF EXISTS "Owner can manage all roles" ON user_roles;
 CREATE POLICY "Owner can manage all roles" ON user_roles
   FOR ALL USING (
     EXISTS (
-      SELECT 1 FROM auth.users 
-      WHERE id = auth.uid() 
-      AND email = 'twriapil@gmail.com'
+      SELECT 1 FROM user_roles ur
+      WHERE ur.id = auth.uid()
+      AND ur.role = 'owner'
     )
   );
 
@@ -692,14 +692,8 @@ $$;
 -- 15. INITIAL ADMIN DATA
 -- =====================================================
 
--- Insert owner role for hardcoded email
-INSERT INTO user_roles (id, role, granted_by, granted_at) 
-SELECT id, 'owner', id, timezone('utc'::text, now())
-FROM auth.users 
-WHERE email = 'twriapil@gmail.com'
-ON CONFLICT (id) DO UPDATE SET
-  role = 'owner',
-  updated_at = timezone('utc'::text, now());
+-- Admin roles will be assigned through the admin panel
+-- No hardcoded owner email - all roles come from user_roles table
 
 -- Insert default project configuration
 INSERT INTO project_config (config_key, config_value, description, config_type, is_public) VALUES
@@ -714,47 +708,8 @@ INSERT INTO project_config (config_key, config_value, description, config_type, 
 ('maintenance_mode', 'false', 'Enable/disable maintenance mode', 'general', false)
 ON CONFLICT (config_key) DO NOTHING;
 
--- Insert default hero sections
-INSERT INTO hero_sections (title, description, image_url, primary_button_text, primary_button_url, secondary_button_text, secondary_button_url, is_active, display_order, created_by) 
-SELECT 
-  '2024 Kentucky Derby May 4, 2024 Churchill Downs',
-  'Experience the most exciting two minutes in sports at Churchill Downs. Join us for the 150th running of the Kentucky Derby with premium seating and exclusive access.',
-  'https://images.unsplash.com/photo-1551698618-1dfe5d97d256?w=1200&h=800&fit=crop&crop=center&auto=format&q=80',
-  'View Tickets',
-  '/category/sports',
-  'View Dates',
-  '/category/sports',
-  true,
-  1,
-  id
-FROM auth.users WHERE email = 'twriapil@gmail.com'
-UNION ALL
-SELECT 
-  'Taylor Swift - The Eras Tour',
-  'Don''t miss Taylor Swift''s spectacular Eras Tour featuring songs from all her albums. A once-in-a-lifetime concert experience with stunning visuals and unforgettable performances.',
-  'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=1200&h=800&fit=crop&crop=center&auto=format&q=80',
-  'View Tickets',
-  '/category/concerts',
-  'View Dates',
-  '/category/concerts',
-  true,
-  2,
-  id
-FROM auth.users WHERE email = 'twriapil@gmail.com'
-UNION ALL
-SELECT 
-  'Lakers vs Warriors - NBA Finals',
-  'Witness basketball history in the making. The ultimate showdown for the championship with the best players in the world competing for glory.',
-  'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=1200&h=800&fit=crop&crop=center&auto=format&q=80',
-  'View Tickets',
-  '/category/sports',
-  'View Dates',
-  '/category/sports',
-  true,
-  3,
-  id
-FROM auth.users WHERE email = 'twriapil@gmail.com'
-ON CONFLICT DO NOTHING;
+-- Hero sections will be created through the admin panel
+-- No hardcoded hero content - all content managed dynamically
 
 -- =====================================================
 -- SCHEMA COMPLETE

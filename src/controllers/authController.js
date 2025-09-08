@@ -33,7 +33,6 @@ class AuthController {
         if (!profile) {
           const basicProfile = {
             id: result.user.id,
-            email: result.user.email,
             first_name: result.user.user_metadata?.first_name || '',
             last_name: result.user.user_metadata?.last_name || '',
             phone: result.user.phone || '',
@@ -96,7 +95,6 @@ class AuthController {
         try {
           const basicProfile = {
             id: result.user.id,
-            email: result.user.email,
             first_name: metadata.first_name || '',
             last_name: metadata.last_name || '',
             phone: result.user.phone || '',
@@ -180,7 +178,6 @@ class AuthController {
           // If no profile exists, try to create one with basic user info
           const basicProfile = {
             id: userId,
-            email: req.user.email,
             first_name: req.user.user_metadata?.first_name || '',
             last_name: req.user.user_metadata?.last_name || '',
             phone: req.user.phone || '',
@@ -191,23 +188,19 @@ class AuthController {
           profile = await supabaseService.upsertUserProfile(userId, basicProfile);
         }
 
-        // Get user role
-        if (req.user.email === 'twriapil@gmail.com') {
-          userRole = 'owner';
-        } else {
-          try {
-            const { data: roleData, error: roleError } = await supabaseService.adminClient
-              .from('user_roles')
-              .select('role')
-              .eq('id', userId)
-              .single();
+        // Get user role from database
+        try {
+          const { data: roleData, error: roleError } = await supabaseService.adminClient
+            .from('user_roles')
+            .select('role')
+            .eq('id', userId)
+            .single();
 
-            if (!roleError && roleData) {
-              userRole = roleData.role;
-            }
-          } catch (roleError) {
-            console.warn('Failed to fetch user role (non-critical):', roleError.message);
+          if (!roleError && roleData) {
+            userRole = roleData.role;
           }
+        } catch (roleError) {
+          console.warn('Failed to fetch user role (non-critical):', roleError.message);
         }
       } catch (profileError) {
         console.warn('Profile operations failed (non-critical):', profileError.message);
