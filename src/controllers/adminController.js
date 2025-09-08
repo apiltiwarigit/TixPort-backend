@@ -448,6 +448,15 @@ class AdminController {
           .trim();
       };
 
+      // Fetch existing visibility settings to preserve manual changes
+      const existingIds = uniqueCategories.map((c) => parseInt(c.id, 10));
+      const { data: existingRows } = await supabaseService.adminClient
+        .from('categories')
+        .select('id, is_visible')
+        .in('id', existingIds);
+      const idToVisible = new Map();
+      (existingRows || []).forEach((row) => idToVisible.set(row.id, row.is_visible));
+
       // Prepare rows
       const baseRows = uniqueCategories.map((cat) => {
         const id = parseInt(cat.id, 10);
@@ -458,7 +467,8 @@ class AdminController {
           slug: toSlug(cat.name, id),
           // parent_id intentionally omitted in phase 1 to avoid FK constraint
           api_data: cat,
-          is_visible: true,
+          // Preserve existing visibility; default true only for brand new rows
+          is_visible: idToVisible.has(id) ? idToVisible.get(id) : true,
           sync_at: new Date().toISOString(),
         };
       });
@@ -474,7 +484,8 @@ class AdminController {
             slug: toSlug(cat.name, id),
             parent_id: parentId,
             api_data: cat,
-            is_visible: true,
+            // Preserve existing visibility; default true for new
+            is_visible: idToVisible.has(id) ? idToVisible.get(id) : true,
             sync_at: new Date().toISOString(),
           };
         });
@@ -642,9 +653,52 @@ class AdminController {
   // ===========================
 
   /**
-   * Get homepage categories
+   * Get homepage categories (admin version - includes inactive)
    */
   async getHomepageCategories(req, res) {
+    try {
+      const { data: homepageCategories, error } = await supabaseService.adminClient
+        .from('homepage_categories')
+        .select(`
+          id,
+          display_order,
+          is_active,
+          created_at,
+          categories (
+            id,
+            name,
+            slug
+          )
+        `)
+        .order('display_order', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching homepage categories:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch homepage categories',
+          error: error.message
+        });
+      }
+
+      res.json({
+        success: true,
+        data: homepageCategories
+      });
+    } catch (error) {
+      console.error('Error in getHomepageCategories:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch homepage categories',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get homepage categories (public - active only)
+   */
+  async getPublicHomepageCategories(req, res) {
     try {
       const { data: homepageCategories, error } = await supabaseService.anonClient
         .from('homepage_categories')
@@ -676,7 +730,7 @@ class AdminController {
         data: homepageCategories
       });
     } catch (error) {
-      console.error('Error in getHomepageCategories:', error);
+      console.error('Error in getPublicHomepageCategories:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to fetch homepage categories',
@@ -692,10 +746,10 @@ class AdminController {
     try {
       const { category_ids } = req.body;
 
-      if (!Array.isArray(category_ids) || category_ids.length === 0 || category_ids.length > 3) {
+      if (!Array.isArray(category_ids) || category_ids.length === 0 || category_ids.length > 4) {
         return res.status(400).json({
           success: false,
-          message: 'Must provide 1-3 category IDs',
+          message: 'Must provide 1-4 category IDs',
           code: 'INVALID_CATEGORIES'
         });
       }
@@ -717,7 +771,7 @@ class AdminController {
       const { data, error } = await supabaseService.adminClient
         .from('homepage_categories')
         .upsert(insertData, {
-          onConflict: 'category_id'
+          onConflict: 'category_id,is_active'
         })
         .select(`
           id,
@@ -749,6 +803,64 @@ class AdminController {
       res.status(500).json({
         success: false,
         message: 'Failed to set homepage categories',
+        error: error.message
+      });
+    }
+  }
+
+  // ===========================
+  // DASHBOARD STATS
+  // ===========================
+
+  /**
+   * Get dashboard statistics
+   */
+  async getDashboardStats(req, res) {
+    try {
+      // Fetch all stats in parallel
+      const [usersResult, heroSectionsResult, categoriesResult] = await Promise.all([
+        // Get total users count
+        supabaseService.adminClient
+          .from('user_roles')
+          .select('id', { count: 'exact', head: true }),
+        
+        // Get hero sections count
+        supabaseService.adminClient
+          .from('hero_sections')
+          .select('id', { count: 'exact', head: true }),
+        
+        // Get categories count
+        supabaseService.adminClient
+          .from('categories')
+          .select('id', { count: 'exact', head: true })
+      ]);
+
+      // Get last sync time from categories (most recent sync_at)
+      const { data: lastSyncData } = await supabaseService.adminClient
+        .from('categories')
+        .select('sync_at')
+        .not('sync_at', 'is', null)
+        .order('sync_at', { ascending: false })
+        .limit(1);
+
+      const lastSync = lastSyncData && lastSyncData.length > 0 
+        ? new Date(lastSyncData[0].sync_at).toLocaleString()
+        : 'Never';
+
+      res.json({
+        success: true,
+        data: {
+          totalUsers: usersResult.count || 0,
+          heroSections: heroSectionsResult.count || 0,
+          categories: categoriesResult.count || 0,
+          lastSync
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching dashboard stats:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch dashboard stats',
         error: error.message
       });
     }

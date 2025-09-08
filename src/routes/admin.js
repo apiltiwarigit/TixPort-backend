@@ -8,6 +8,13 @@ const { requireAdmin, requireOwner, getUserRole } = require('../middleware/admin
 router.use(authMiddleware.authenticateToken);
 
 // ===========================
+// DASHBOARD ROUTES
+// ===========================
+
+// Get dashboard statistics (admin/owner only)
+router.get('/dashboard/stats', requireAdmin, adminController.getDashboardStats);
+
+// ===========================
 // USER MANAGEMENT ROUTES
 // ===========================
 
@@ -49,6 +56,9 @@ router.patch('/categories/:id/visibility', requireAdmin, adminController.updateC
 // ===========================
 // HOMEPAGE CATEGORIES ROUTES
 // ===========================
+
+// Get homepage categories (admin/owner only)
+router.get('/homepage-categories', requireAdmin, adminController.getHomepageCategories);
 
 // Set homepage categories (admin/owner only)
 router.post('/homepage-categories', requireAdmin, adminController.setHomepageCategories);

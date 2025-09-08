@@ -9,8 +9,8 @@ const adminController = require('../controllers/adminController');
 // Get active hero sections for public display
 router.get('/hero-sections', adminController.getActiveHeroSections);
 
-// Get homepage categories for public display
-router.get('/homepage-categories', adminController.getHomepageCategories);
+// Get homepage categories for public display (active only)
+router.get('/homepage-categories', adminController.getPublicHomepageCategories);
 
 // Get public config settings
 router.get('/config', adminController.getPublicConfig);
