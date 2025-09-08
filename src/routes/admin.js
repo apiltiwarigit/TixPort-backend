@@ -14,8 +14,8 @@ router.use(authMiddleware.authenticateToken);
 // Get all users (admin/owner only)
 router.get('/users', requireAdmin, adminController.getUsers);
 
-// Update user role (admin/owner only, but only owner can grant owner role)
-router.patch('/users/:userId/role', requireAdmin, adminController.updateUserRole);
+// Update user role (owner only)
+router.patch('/users/:userId/role', requireOwner, adminController.updateUserRole);
 
 // ===========================
 // HERO SECTION ROUTES
