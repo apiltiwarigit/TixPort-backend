@@ -13,55 +13,69 @@ class AdminController {
   async getUsers(req, res) {
     try {
       const { page = 1, limit = 50, search = '' } = req.query;
-      const offset = (parseInt(page) - 1) * parseInt(limit);
+      const pageNum = parseInt(page);
+      const perPage = parseInt(limit);
 
-      // Get users from auth.users with their profiles and roles
-      let query = supabaseService.adminClient
-        .from('profiles')
-        .select(`
-          id,
-          first_name,
-          last_name,
-          created_at,
-          updated_at,
-          user_roles (
-            role,
-            granted_at,
-            granted_by
+      // 1) Fetch auth users (emails, timestamps)
+      const adminUsersResult = await supabaseService.listUsers(pageNum, perPage);
+      const authUsers = adminUsersResult?.users || adminUsersResult?.data?.users || [];
+
+      // Optional: simple client-side search on email until backend-side search is added
+      const filteredAuthUsers = search
+        ? authUsers.filter((u) =>
+            u.email?.toLowerCase().includes(String(search).toLowerCase())
           )
-        `)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + parseInt(limit) - 1);
+        : authUsers;
 
-      if (search) {
-        query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%`);
+      const userIds = filteredAuthUsers.map((u) => u.id);
+
+      // 2) Fetch profiles (names)
+      let profilesMap = new Map();
+      if (userIds.length > 0) {
+        const { data: profilesData } = await supabaseService.adminClient
+          .from('profiles')
+          .select('id, first_name, last_name, created_at, updated_at')
+          .in('id', userIds);
+        (profilesData || []).forEach((p) => profilesMap.set(p.id, p));
       }
 
-      const { data: users, error, count } = await query;
-
-      if (error) {
-        console.error('Error fetching users:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to fetch users',
-          error: error.message
-        });
+      // 3) Fetch roles
+      let rolesMap = new Map();
+      if (userIds.length > 0) {
+        const { data: rolesData } = await supabaseService.adminClient
+          .from('user_roles')
+          .select('id, role, granted_at, granted_by')
+          .in('id', userIds);
+        (rolesData || []).forEach((r) => rolesMap.set(r.id, r));
       }
 
-      // Get total count for pagination
-      const { count: totalCount } = await supabaseService.adminClient
-        .from('profiles')
-        .select('*', { count: 'exact', head: true });
+      // 4) Merge into unified user objects
+      const mergedUsers = filteredAuthUsers.map((u) => {
+        const profile = profilesMap.get(u.id) || {};
+        const roleRec = rolesMap.get(u.id) || {};
+        return {
+          id: u.id,
+          email: u.email,
+          first_name: profile.first_name || null,
+          last_name: profile.last_name || null,
+          created_at: profile.created_at || u.created_at || null,
+          updated_at: profile.updated_at || null,
+          last_sign_in_at: u.last_sign_in_at || null,
+          role: roleRec.role || 'user',
+          role_granted_at: roleRec.granted_at || null,
+          role_granted_by: roleRec.granted_by || null,
+        };
+      });
 
       res.json({
         success: true,
         data: {
-          users,
+          users: mergedUsers,
           pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: totalCount,
-            totalPages: Math.ceil(totalCount / parseInt(limit))
+            page: pageNum,
+            limit: perPage,
+            total: mergedUsers.length,
+            totalPages: 1
           }
         }
       });
@@ -392,11 +406,21 @@ class AdminController {
   async syncCategories(req, res) {
     try {
       console.log('Starting category sync from TicketEvolution API...');
+      // Fetch ALL pages of categories from TicketEvolution API
+      const allCategories = [];
+      const first = await ticketEvolutionService.getCategories(1, 100);
+      allCategories.push(...(first.categories || []));
+      const totalPages = first.pagination?.total_pages || 1;
+      for (let p = 2; p <= totalPages; p++) {
+        try {
+          const pageResult = await ticketEvolutionService.getCategories(p, 100);
+          allCategories.push(...(pageResult.categories || []));
+        } catch (e) {
+          console.warn(`Warning: failed to fetch categories page ${p}:`, e.message);
+        }
+      }
 
-      // Get categories from TicketEvolution API
-      const result = await ticketEvolutionService.getCategories();
-      
-      if (!result.categories || result.categories.length === 0) {
+      if (allCategories.length === 0) {
         return res.status(400).json({
           success: false,
           message: 'No categories received from API',
@@ -404,32 +428,114 @@ class AdminController {
         });
       }
 
-      console.log(`Received ${result.categories.length} categories from API`);
+      console.log(`Received ${allCategories.length} categories from API (total pages: ${totalPages})`);
 
-      // Use the database function to sync categories
-      const { data: syncResult, error } = await supabaseService.adminClient
-        .rpc('sync_categories_from_api', { 
-          api_categories: JSON.stringify(result.categories) 
+      // Dedupe categories by ID to prevent upsert conflicts within a single batch
+      const byId = new Map();
+      for (const cat of allCategories) {
+        const idNum = parseInt(cat.id, 10);
+        if (!byId.has(idNum)) byId.set(idNum, cat);
+      }
+      const uniqueCategories = Array.from(byId.values());
+
+      // Utility to generate slug
+      const toSlug = (name, id) => {
+        if (!name) return `category-${id}`;
+        return name
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')
+          .replace(/\s+/g, '-')
+          .trim();
+      };
+
+      // Prepare rows
+      const baseRows = uniqueCategories.map((cat) => {
+        const id = parseInt(cat.id, 10);
+        const parentId = cat.parent ? parseInt(cat.parent.id, 10) : null;
+        return {
+          id,
+          name: cat.name,
+          slug: toSlug(cat.name, id),
+          // parent_id intentionally omitted in phase 1 to avoid FK constraint
+          api_data: cat,
+          is_visible: true,
+          sync_at: new Date().toISOString(),
+        };
+      });
+
+      const withParents = uniqueCategories
+        .filter((cat) => !!cat.parent)
+        .map((cat) => {
+          const id = parseInt(cat.id, 10);
+          const parentId = parseInt(cat.parent.id, 10);
+          return {
+            id,
+            name: cat.name,
+            slug: toSlug(cat.name, id),
+            parent_id: parentId,
+            api_data: cat,
+            is_visible: true,
+            sync_at: new Date().toISOString(),
+          };
         });
 
-      if (error) {
-        console.error('Error syncing categories:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to sync categories',
-          error: error.message
-        });
+      // Dedupe baseRows and withParents arrays in case of residual duplicates
+      const dedupeById = (rows) => {
+        const m = new Map();
+        rows.forEach(r => { if (!m.has(r.id)) m.set(r.id, r); });
+        return Array.from(m.values());
+      };
+      const baseRowsUnique = dedupeById(baseRows);
+      const withParentsUnique = dedupeById(withParents);
+
+      // Chunk helper
+      const chunk = (arr, size) => {
+        const chunks = [];
+        for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+        return chunks;
+      };
+
+      // Phase 1: upsert all categories without parent_id
+      const baseChunks = chunk(baseRowsUnique, 500);
+      for (const c of baseChunks) {
+        const { error } = await supabaseService.adminClient
+          .from('categories')
+          .upsert(c, { onConflict: 'id' });
+        if (error) {
+          console.error('Error during phase 1 upsert:', error);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to sync categories (phase 1)',
+            error: error.message,
+          });
+        }
       }
 
-      console.log('Category sync completed:', syncResult);
+      // Phase 2: upsert categories with parent_id now that parents exist
+      const parentChunks = chunk(withParentsUnique, 500);
+      for (const c of parentChunks) {
+        const { error } = await supabaseService.adminClient
+          .from('categories')
+          .upsert(c, { onConflict: 'id' });
+        if (error) {
+          console.error('Error during phase 2 upsert:', error);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to sync categories (phase 2)',
+            error: error.message,
+          });
+        }
+      }
+
+      console.log('Category sync completed: inserted/updated', allCategories.length);
 
       res.json({
         success: true,
         data: {
-          inserted: syncResult[0]?.inserted_count || 0,
-          updated: syncResult[0]?.updated_count || 0,
-          total: syncResult[0]?.total_count || 0,
-          api_total: result.categories.length
+          inserted: 0, // Supabase does not return counts per upsert batch here
+          updated: 0,
+          total: allCategories.length,
+          api_total: allCategories.length,
         },
         message: 'Categories synced successfully'
       });
