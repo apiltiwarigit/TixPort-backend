@@ -746,10 +746,39 @@ class AdminController {
     try {
       const { category_ids } = req.body;
 
-      if (!Array.isArray(category_ids) || category_ids.length === 0 || category_ids.length > 4) {
+      // Read limits from project_config (fallback to min=1, max=4)
+      let minLimit = 1;
+      let maxLimit = 4;
+      try {
+        const { data: cfg } = await supabaseService.adminClient
+          .from('project_config')
+          .select('config_key, config_value')
+          .in('config_key', ['min_homepage_categories', 'max_homepage_categories']);
+        if (Array.isArray(cfg)) {
+          const toNum = (v) => {
+            if (typeof v === 'number') return v;
+            if (typeof v === 'string') return parseInt(v.replace(/"/g, ''));
+            return parseInt(String(v));
+          };
+          const minRow = cfg.find(r => r.config_key === 'min_homepage_categories');
+          const maxRow = cfg.find(r => r.config_key === 'max_homepage_categories');
+          if (minRow && minRow.config_value !== undefined && minRow.config_value !== null) {
+            const n = toNum(minRow.config_value);
+            if (!Number.isNaN(n)) minLimit = n;
+          }
+          if (maxRow && maxRow.config_value !== undefined && maxRow.config_value !== null) {
+            const n = toNum(maxRow.config_value);
+            if (!Number.isNaN(n)) maxLimit = n;
+          }
+        }
+      } catch (e) {
+        // Ignore and use defaults
+      }
+
+      if (!Array.isArray(category_ids) || category_ids.length < minLimit || category_ids.length > maxLimit) {
         return res.status(400).json({
           success: false,
-          message: 'Must provide 1-4 category IDs',
+          message: `Must provide ${minLimit}-${maxLimit} category IDs`,
           code: 'INVALID_CATEGORIES'
         });
       }
@@ -916,10 +945,24 @@ class AdminController {
    */
   async getPublicConfig(req, res) {
     try {
-      const { data: config, error } = await supabaseService.anonClient
+      // Allowlist of safe config keys for the public site
+      const PUBLIC_KEYS = [
+        'site_name',
+        'contact_email',
+        'contact_phone',
+        'contact_address',
+        'location_search_radius',
+        'max_homepage_categories',
+        'min_homepage_categories',
+        'maintenance_mode'
+      ];
+
+      // Use admin client to avoid RLS blocking non-public but allowlisted keys;
+      // we filter strictly by PUBLIC_KEYS before returning to keep it safe.
+      const { data: config, error } = await supabaseService.adminClient
         .from('project_config')
         .select('config_key, config_value, config_type')
-        .eq('is_public', true);
+        .in('config_key', PUBLIC_KEYS);
 
       if (error) {
         console.error('Error fetching public config:', error);
@@ -930,9 +973,9 @@ class AdminController {
         });
       }
 
-      // Transform to key-value object
+      // Transform to key-value object (preserve JSONB types)
       const configObject = {};
-      config.forEach(item => {
+      (config || []).forEach(item => {
         configObject[item.config_key] = item.config_value;
       });
 
