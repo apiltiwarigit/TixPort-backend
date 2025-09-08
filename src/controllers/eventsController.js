@@ -1,4 +1,5 @@
 const ticketEvolutionService = require('../services/ticketEvolutionService');
+const supabaseService = require('../services/supabaseService');
 
 class EventsController {
     // Get all events with optional filtering - handles all event requests in one function
@@ -70,9 +71,27 @@ class EventsController {
       if (city_state) filters.city_state = city_state;
       if (country_code) filters.country_code = country_code;
 
-      // Set radius for geolocation searches
+      // Set radius for geolocation searches using dynamic config
       if (filters.ip || filters.lat || filters.postal_code || filters.city_state) {
-        filters.within = parseInt(within) || 60;
+        // Get dynamic radius from config, fallback to query param, then default
+        let defaultRadius = 60;
+        try {
+          const { data: configData, error } = await supabaseService.anonClient
+            .from('project_config')
+            .select('config_value')
+            .eq('config_key', 'location_search_radius')
+            .eq('is_public', true)
+            .single();
+          
+          if (!error && configData?.config_value) {
+            defaultRadius = parseInt(configData.config_value) || 60;
+          }
+        } catch (configError) {
+          console.warn(`[REQUEST ${requestId}] Failed to fetch radius config, using default:`, configError.message);
+        }
+        
+        filters.within = parseInt(within) || defaultRadius;
+        console.log(`[REQUEST ${requestId}] Using radius: ${filters.within} miles`);
       }
 
       // Date and time filters

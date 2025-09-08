@@ -171,6 +171,8 @@ class AuthController {
 
       // Get user profile from database (non-blocking)
       let profile = null;
+      let userRole = 'user'; // Default role
+      
       try {
         profile = await supabaseService.getUserProfile(userId);
 
@@ -188,6 +190,25 @@ class AuthController {
 
           profile = await supabaseService.upsertUserProfile(userId, basicProfile);
         }
+
+        // Get user role
+        if (req.user.email === 'twriapil@gmail.com') {
+          userRole = 'owner';
+        } else {
+          try {
+            const { data: roleData, error: roleError } = await supabaseService.adminClient
+              .from('user_roles')
+              .select('role')
+              .eq('id', userId)
+              .single();
+
+            if (!roleError && roleData) {
+              userRole = roleData.role;
+            }
+          } catch (roleError) {
+            console.warn('Failed to fetch user role (non-critical):', roleError.message);
+          }
+        }
       } catch (profileError) {
         console.warn('Profile operations failed (non-critical):', profileError.message);
         // Continue without profile - user can still authenticate
@@ -197,7 +218,8 @@ class AuthController {
         success: true,
         data: {
           user: req.user,
-          profile
+          profile,
+          role: userRole
         }
       });
 

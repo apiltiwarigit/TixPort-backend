@@ -337,6 +337,426 @@ INSERT INTO saved_events (user_id, event_id, event_name, event_date, venue_name)
 */
 
 -- =====================================================
+-- 11. ADMIN PANEL TABLES
+-- =====================================================
+
+-- User roles table for admin panel access control
+CREATE TABLE IF NOT EXISTS user_roles (
+  id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('owner', 'admin', 'user')),
+  granted_by UUID REFERENCES auth.users(id),
+  granted_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS on user_roles table
+ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Owner can manage all roles
+DROP POLICY IF EXISTS "Owner can manage all roles" ON user_roles;
+CREATE POLICY "Owner can manage all roles" ON user_roles
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM auth.users 
+      WHERE id = auth.uid() 
+      AND email = 'twriapil@gmail.com'
+    )
+  );
+
+-- Policy: Admins can view all roles but only grant/revoke admin and user roles
+DROP POLICY IF EXISTS "Admins can view roles" ON user_roles;
+CREATE POLICY "Admins can view roles" ON user_roles
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM user_roles ur 
+      WHERE ur.id = auth.uid() 
+      AND ur.role IN ('owner', 'admin')
+    )
+  );
+
+-- Policy: Admins can insert non-owner roles
+DROP POLICY IF EXISTS "Admins can grant roles" ON user_roles;
+CREATE POLICY "Admins can grant roles" ON user_roles
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_roles ur 
+      WHERE ur.id = auth.uid() 
+      AND ur.role IN ('owner', 'admin')
+    )
+    AND role != 'owner'
+  );
+
+-- Policy: Users can view their own role
+DROP POLICY IF EXISTS "Users can view own role" ON user_roles;
+CREATE POLICY "Users can view own role" ON user_roles
+  FOR SELECT USING (auth.uid() = id);
+
+-- Hero section content management
+CREATE TABLE IF NOT EXISTS hero_sections (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  image_url TEXT,
+  primary_button_text TEXT DEFAULT 'View Tickets',
+  primary_button_url TEXT,
+  secondary_button_text TEXT DEFAULT 'View Dates',
+  secondary_button_url TEXT,
+  is_active BOOLEAN DEFAULT false,
+  display_order INTEGER DEFAULT 0,
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS on hero_sections table
+ALTER TABLE hero_sections ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Public can view active hero sections
+DROP POLICY IF EXISTS "Anyone can view active hero sections" ON hero_sections;
+CREATE POLICY "Anyone can view active hero sections" ON hero_sections
+  FOR SELECT USING (is_active = true);
+
+-- Policy: Admins can manage hero sections
+DROP POLICY IF EXISTS "Admins can manage hero sections" ON hero_sections;
+CREATE POLICY "Admins can manage hero sections" ON hero_sections
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM user_roles ur 
+      WHERE ur.id = auth.uid() 
+      AND ur.role IN ('owner', 'admin')
+    )
+  );
+
+-- Categories table to store synced category data
+CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  parent_id INTEGER REFERENCES categories(id),
+  is_visible BOOLEAN DEFAULT true,
+  api_data JSONB, -- Store full API response for reference
+  sync_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS on categories table
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Anyone can view visible categories
+DROP POLICY IF EXISTS "Anyone can view visible categories" ON categories;
+CREATE POLICY "Anyone can view visible categories" ON categories
+  FOR SELECT USING (is_visible = true);
+
+-- Policy: Admins can manage categories
+DROP POLICY IF EXISTS "Admins can manage categories" ON categories;
+CREATE POLICY "Admins can manage categories" ON categories
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM user_roles ur 
+      WHERE ur.id = auth.uid() 
+      AND ur.role IN ('owner', 'admin')
+    )
+  );
+
+-- Homepage category selection (max 3, min 1)
+CREATE TABLE IF NOT EXISTS homepage_categories (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  
+  UNIQUE(category_id, is_active) -- Prevent duplicate active categories
+);
+
+-- Enable RLS on homepage_categories table
+ALTER TABLE homepage_categories ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Anyone can view active homepage categories
+DROP POLICY IF EXISTS "Anyone can view active homepage categories" ON homepage_categories;
+CREATE POLICY "Anyone can view active homepage categories" ON homepage_categories
+  FOR SELECT USING (is_active = true);
+
+-- Policy: Admins can manage homepage categories
+DROP POLICY IF EXISTS "Admins can manage homepage categories" ON homepage_categories;
+CREATE POLICY "Admins can manage homepage categories" ON homepage_categories
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM user_roles ur 
+      WHERE ur.id = auth.uid() 
+      AND ur.role IN ('owner', 'admin')
+    )
+  );
+
+-- Project configuration settings
+CREATE TABLE IF NOT EXISTS project_config (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  config_key TEXT UNIQUE NOT NULL,
+  config_value JSONB NOT NULL,
+  description TEXT,
+  config_type TEXT DEFAULT 'general' CHECK (config_type IN ('general', 'location', 'contact', 'api', 'ui')),
+  is_public BOOLEAN DEFAULT false, -- Whether this config can be accessed by frontend
+  updated_by UUID REFERENCES auth.users(id),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS on project_config table
+ALTER TABLE project_config ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Public can view public config
+DROP POLICY IF EXISTS "Anyone can view public config" ON project_config;
+CREATE POLICY "Anyone can view public config" ON project_config
+  FOR SELECT USING (is_public = true);
+
+-- Policy: Admins can manage all config
+DROP POLICY IF EXISTS "Admins can manage config" ON project_config;
+CREATE POLICY "Admins can manage config" ON project_config
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM user_roles ur 
+      WHERE ur.id = auth.uid() 
+      AND ur.role IN ('owner', 'admin')
+    )
+  );
+
+-- =====================================================
+-- 12. ADMIN INDEXES
+-- =====================================================
+
+-- User roles indexes
+CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role);
+CREATE INDEX IF NOT EXISTS idx_user_roles_granted_at ON user_roles(granted_at);
+
+-- Hero sections indexes
+CREATE INDEX IF NOT EXISTS idx_hero_sections_active ON hero_sections(is_active);
+CREATE INDEX IF NOT EXISTS idx_hero_sections_order ON hero_sections(display_order);
+
+-- Categories indexes
+CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);
+CREATE INDEX IF NOT EXISTS idx_categories_visible ON categories(is_visible);
+CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
+
+-- Homepage categories indexes
+CREATE INDEX IF NOT EXISTS idx_homepage_categories_order ON homepage_categories(display_order);
+CREATE INDEX IF NOT EXISTS idx_homepage_categories_active ON homepage_categories(is_active);
+
+-- Project config indexes
+CREATE INDEX IF NOT EXISTS idx_project_config_key ON project_config(config_key);
+CREATE INDEX IF NOT EXISTS idx_project_config_type ON project_config(config_type);
+CREATE INDEX IF NOT EXISTS idx_project_config_public ON project_config(is_public);
+
+-- =====================================================
+-- 13. ADMIN TRIGGERS
+-- =====================================================
+
+-- Triggers for user_roles table
+DROP TRIGGER IF EXISTS update_user_roles_updated_at ON user_roles;
+CREATE TRIGGER update_user_roles_updated_at 
+    BEFORE UPDATE ON user_roles 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Triggers for hero_sections table
+DROP TRIGGER IF EXISTS update_hero_sections_updated_at ON hero_sections;
+CREATE TRIGGER update_hero_sections_updated_at 
+    BEFORE UPDATE ON hero_sections 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Triggers for categories table
+DROP TRIGGER IF EXISTS update_categories_updated_at ON categories;
+CREATE TRIGGER update_categories_updated_at 
+    BEFORE UPDATE ON categories 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Triggers for homepage_categories table
+DROP TRIGGER IF EXISTS update_homepage_categories_updated_at ON homepage_categories;
+CREATE TRIGGER update_homepage_categories_updated_at 
+    BEFORE UPDATE ON homepage_categories 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Triggers for project_config table
+DROP TRIGGER IF EXISTS update_project_config_updated_at ON project_config;
+CREATE TRIGGER update_project_config_updated_at 
+    BEFORE UPDATE ON project_config 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- =====================================================
+-- 14. ADMIN FUNCTIONS
+-- =====================================================
+
+-- Function to ensure homepage categories limit (max 3)
+CREATE OR REPLACE FUNCTION check_homepage_categories_limit()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Check if inserting/updating to active
+  IF NEW.is_active = true THEN
+    -- Count current active categories (excluding the current one if updating)
+    IF (
+      SELECT COUNT(*) 
+      FROM homepage_categories 
+      WHERE is_active = true 
+      AND (TG_OP = 'INSERT' OR id != NEW.id)
+    ) >= 3 THEN
+      RAISE EXCEPTION 'Maximum 3 active homepage categories allowed';
+    END IF;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+-- Trigger for homepage categories limit
+DROP TRIGGER IF EXISTS check_homepage_categories_limit_trigger ON homepage_categories;
+CREATE TRIGGER check_homepage_categories_limit_trigger
+    BEFORE INSERT OR UPDATE ON homepage_categories
+    FOR EACH ROW
+    EXECUTE FUNCTION check_homepage_categories_limit();
+
+-- Function to sync categories from API (to be called by admin)
+CREATE OR REPLACE FUNCTION sync_categories_from_api(api_categories JSONB)
+RETURNS TABLE (
+  inserted_count INTEGER,
+  updated_count INTEGER,
+  total_count INTEGER
+) 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  category_record RECORD;
+  inserted_count INTEGER := 0;
+  updated_count INTEGER := 0;
+BEGIN
+  -- Loop through API categories
+  FOR category_record IN
+    SELECT 
+      (value->>'id')::INTEGER as cat_id,
+      value->>'name' as cat_name,
+      CASE 
+        WHEN value->'parent' IS NOT NULL THEN (value->'parent'->>'id')::INTEGER
+        ELSE NULL
+      END as parent_cat_id,
+      value as full_data
+    FROM jsonb_array_elements(api_categories)
+  LOOP
+    -- Generate slug from name
+    DECLARE
+      cat_slug TEXT := COALESCE(
+        lower(regexp_replace(regexp_replace(category_record.cat_name, '[^a-zA-Z0-9\s]', '', 'g'), '\s+', '-', 'g')),
+        'category-' || category_record.cat_id::TEXT
+      );
+    BEGIN
+      -- Insert or update category
+      INSERT INTO categories (id, name, slug, parent_id, api_data, sync_at)
+      VALUES (
+        category_record.cat_id,
+        category_record.cat_name,
+        cat_slug,
+        category_record.parent_cat_id,
+        category_record.full_data,
+        timezone('utc'::text, now())
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        slug = EXCLUDED.slug,
+        parent_id = EXCLUDED.parent_id,
+        api_data = EXCLUDED.api_data,
+        sync_at = EXCLUDED.sync_at,
+        updated_at = timezone('utc'::text, now());
+        
+      -- Count operations
+      IF TG_OP = 'INSERT' THEN
+        inserted_count := inserted_count + 1;
+      ELSE
+        updated_count := updated_count + 1;
+      END IF;
+    END;
+  END LOOP;
+  
+  RETURN QUERY SELECT inserted_count, updated_count, inserted_count + updated_count;
+END;
+$$;
+
+-- =====================================================
+-- 15. INITIAL ADMIN DATA
+-- =====================================================
+
+-- Insert owner role for hardcoded email
+INSERT INTO user_roles (id, role, granted_by, granted_at) 
+SELECT id, 'owner', id, timezone('utc'::text, now())
+FROM auth.users 
+WHERE email = 'twriapil@gmail.com'
+ON CONFLICT (id) DO UPDATE SET
+  role = 'owner',
+  updated_at = timezone('utc'::text, now());
+
+-- Insert default project configuration
+INSERT INTO project_config (config_key, config_value, description, config_type, is_public) VALUES
+('location_search_radius', '60', 'Default radius in miles for location-based event searches', 'location', true),
+('contact_email', '"support@tixport.com"', 'Primary contact email address', 'contact', true),
+('contact_phone', '"+1-555-123-4567"', 'Primary contact phone number', 'contact', true),
+('contact_address', '"123 Main St, City, State 12345"', 'Business address', 'contact', true),
+('site_name', '"TixPort"', 'Site name for branding', 'ui', true),
+('max_homepage_categories', '3', 'Maximum number of categories to display on homepage', 'ui', false),
+('min_homepage_categories', '1', 'Minimum number of categories required on homepage', 'ui', false),
+('api_cache_duration', '300', 'API cache duration in seconds', 'api', false),
+('maintenance_mode', 'false', 'Enable/disable maintenance mode', 'general', false)
+ON CONFLICT (config_key) DO NOTHING;
+
+-- Insert default hero sections
+INSERT INTO hero_sections (title, description, image_url, primary_button_text, primary_button_url, secondary_button_text, secondary_button_url, is_active, display_order, created_by) 
+SELECT 
+  '2024 Kentucky Derby May 4, 2024 Churchill Downs',
+  'Experience the most exciting two minutes in sports at Churchill Downs. Join us for the 150th running of the Kentucky Derby with premium seating and exclusive access.',
+  'https://images.unsplash.com/photo-1551698618-1dfe5d97d256?w=1200&h=800&fit=crop&crop=center&auto=format&q=80',
+  'View Tickets',
+  '/category/sports',
+  'View Dates',
+  '/category/sports',
+  true,
+  1,
+  id
+FROM auth.users WHERE email = 'twriapil@gmail.com'
+UNION ALL
+SELECT 
+  'Taylor Swift - The Eras Tour',
+  'Don''t miss Taylor Swift''s spectacular Eras Tour featuring songs from all her albums. A once-in-a-lifetime concert experience with stunning visuals and unforgettable performances.',
+  'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=1200&h=800&fit=crop&crop=center&auto=format&q=80',
+  'View Tickets',
+  '/category/concerts',
+  'View Dates',
+  '/category/concerts',
+  true,
+  2,
+  id
+FROM auth.users WHERE email = 'twriapil@gmail.com'
+UNION ALL
+SELECT 
+  'Lakers vs Warriors - NBA Finals',
+  'Witness basketball history in the making. The ultimate showdown for the championship with the best players in the world competing for glory.',
+  'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=1200&h=800&fit=crop&crop=center&auto=format&q=80',
+  'View Tickets',
+  '/category/sports',
+  'View Dates',
+  '/category/sports',
+  true,
+  3,
+  id
+FROM auth.users WHERE email = 'twriapil@gmail.com'
+ON CONFLICT DO NOTHING;
+
+-- =====================================================
 -- SCHEMA COMPLETE
 -- =====================================================
 
@@ -349,7 +769,7 @@ SELECT
   hastriggers
 FROM pg_tables 
 WHERE schemaname = 'public' 
-AND tablename IN ('profiles', 'orders', 'order_items', 'saved_events', 'search_history')
+AND tablename IN ('profiles', 'orders', 'order_items', 'saved_events', 'search_history', 'user_roles', 'hero_sections', 'categories', 'homepage_categories', 'project_config')
 ORDER BY tablename;
 
 -- Display table sizes (useful for monitoring)
@@ -361,5 +781,5 @@ SELECT
   correlation
 FROM pg_stats 
 WHERE schemaname = 'public' 
-AND tablename IN ('profiles', 'orders', 'order_items', 'saved_events', 'search_history')
+AND tablename IN ('profiles', 'orders', 'order_items', 'saved_events', 'search_history', 'user_roles', 'hero_sections', 'categories', 'homepage_categories', 'project_config')
 ORDER BY tablename, attname;
