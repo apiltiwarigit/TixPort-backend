@@ -193,7 +193,6 @@ class TicketEvolutionService {
 
   // Get events with filtering and pagination
   async getEvents(filters = {}, page = 1, limit = 20) {
-
     try {
       // Build API parameters
       const apiParams = {
@@ -208,18 +207,14 @@ class TicketEvolutionService {
         return cachedResponse;
       }
 
-      // Map filter parameters to API
+      // Map only essential filter parameters to API
       const paramMappings = {
-        name: 'name', venue_id: 'venue_id', performer_id: 'performer_id',
-        primary_performer: 'primary_performer', category_id: 'category_id',
-        category_tree: 'category_tree', office_id: 'office_id', q: 'q',
-        fuzzy: 'fuzzy', occurs_at: 'occurs_at', 'occurs_at.gte': 'occurs_at.gte',
-        'occurs_at.lte': 'occurs_at.lte', updated_at: 'updated_at',
-        popularity_score: 'popularity_score', short_term_popularity_score: 'short_term_popularity_score',
-        lat: 'lat', lon: 'lon', within: 'within', ip: 'ip',
-        postal_code: 'postal_code', city_state: 'city_state', country_code: 'country_code',
-        only_with_tickets: 'only_with_tickets', only_with_available_tickets: 'only_with_available_tickets',
-        only_discounted: 'only_discounted', by_time: 'by_time', order_by: 'order_by'
+        category_id: 'category_id',
+        lat: 'lat',
+        lon: 'lon', 
+        within: 'within',
+        ip: 'ip',
+        only_with_available_tickets: 'only_with_available_tickets'
       };
 
       Object.entries(paramMappings).forEach(([filter, param]) => {
@@ -228,6 +223,7 @@ class TicketEvolutionService {
         }
       });
 
+      // if(apiParams.ip) apiParams.ip = "104.174.125.138";
       const response = await this.client.get('/events', { params: apiParams });
 
       const result = {
