@@ -11,5 +11,8 @@ router.get('/popular', categoriesController.getPopularCategories);
 // GET /api/categories/:id/events - Get events for a specific category
 router.get('/:id/events', categoriesController.getCategoryEvents);
 
+// POST /api/categories/:id/track-view - Track category view
+router.post('/:id/track-view', categoriesController.trackCategoryView);
+
 module.exports = router;
 

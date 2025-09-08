@@ -53,6 +53,18 @@ router.get('/categories', requireAdmin, adminController.getCategories);
 // Update category visibility (admin/owner only)
 router.patch('/categories/:id/visibility', requireAdmin, adminController.updateCategoryVisibility);
 
+// Update category processed data (admin/owner only)
+router.patch('/categories/:id/processed-data', requireAdmin, adminController.updateCategoryProcessedData);
+
+// Update category settings (admin/owner only)
+router.patch('/categories/:id/settings', requireAdmin, adminController.updateCategorySettings);
+
+// Toggle category featured flag (compat)
+router.patch('/categories/:id/featured', requireAdmin, adminController.updateCategoryFeatured);
+
+// Get category analytics (admin/owner only)
+router.get('/categories/analytics', requireAdmin, adminController.getCategoryAnalytics);
+
 // ===========================
 // HOMEPAGE CATEGORIES ROUTES
 // ===========================

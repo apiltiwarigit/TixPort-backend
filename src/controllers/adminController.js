@@ -401,16 +401,18 @@ class AdminController {
   // ===========================
 
   /**
-   * Sync categories from TicketEvolution API
+   * Sync categories from TicketEvolution API (ULTRA FAST - Single JSON Operation)
    */
   async syncCategories(req, res) {
     try {
-      console.log('Starting category sync from TicketEvolution API...');
+      console.log('Starting ULTRA-FAST single-JSON category sync...');
+      
       // Fetch ALL pages of categories from TicketEvolution API
       const allCategories = [];
       const first = await ticketEvolutionService.getCategories(1, 100);
       allCategories.push(...(first.categories || []));
       const totalPages = first.pagination?.total_pages || 1;
+      
       for (let p = 2; p <= totalPages; p++) {
         try {
           const pageResult = await ticketEvolutionService.getCategories(p, 100);
@@ -430,7 +432,7 @@ class AdminController {
 
       console.log(`Received ${allCategories.length} categories from API (total pages: ${totalPages})`);
 
-      // Dedupe categories by ID to prevent upsert conflicts within a single batch
+      // Dedupe categories by ID
       const byId = new Map();
       for (const cat of allCategories) {
         const idNum = parseInt(cat.id, 10);
@@ -438,117 +440,37 @@ class AdminController {
       }
       const uniqueCategories = Array.from(byId.values());
 
-      // Utility to generate slug
-      const toSlug = (name, id) => {
-        if (!name) return `category-${id}`;
-        return name
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, '')
-          .replace(/\s+/g, '-')
-          .trim();
-      };
-
-      // Fetch existing visibility settings to preserve manual changes
-      const existingIds = uniqueCategories.map((c) => parseInt(c.id, 10));
-      const { data: existingRows } = await supabaseService.adminClient
-        .from('categories')
-        .select('id, is_visible')
-        .in('id', existingIds);
-      const idToVisible = new Map();
-      (existingRows || []).forEach((row) => idToVisible.set(row.id, row.is_visible));
-
-      // Prepare rows
-      const baseRows = uniqueCategories.map((cat) => {
-        const id = parseInt(cat.id, 10);
-        const parentId = cat.parent ? parseInt(cat.parent.id, 10) : null;
-        return {
-          id,
-          name: cat.name,
-          slug: toSlug(cat.name, id),
-          // parent_id intentionally omitted in phase 1 to avoid FK constraint
-          api_data: cat,
-          // Preserve existing visibility; default true only for brand new rows
-          is_visible: idToVisible.has(id) ? idToVisible.get(id) : true,
-          sync_at: new Date().toISOString(),
-        };
-      });
-
-      const withParents = uniqueCategories
-        .filter((cat) => !!cat.parent)
-        .map((cat) => {
-          const id = parseInt(cat.id, 10);
-          const parentId = parseInt(cat.parent.id, 10);
-          return {
-            id,
-            name: cat.name,
-            slug: toSlug(cat.name, id),
-            parent_id: parentId,
-            api_data: cat,
-            // Preserve existing visibility; default true for new
-            is_visible: idToVisible.has(id) ? idToVisible.get(id) : true,
-            sync_at: new Date().toISOString(),
-          };
+      // SINGLE DATABASE OPERATION - This is the magic!
+      const startTime = Date.now();
+      const { data: syncResult, error: syncError } = await supabaseService.adminClient
+        .rpc('sync_categories_from_api_optimized', {
+          api_categories_json: uniqueCategories
         });
 
-      // Dedupe baseRows and withParents arrays in case of residual duplicates
-      const dedupeById = (rows) => {
-        const m = new Map();
-        rows.forEach(r => { if (!m.has(r.id)) m.set(r.id, r); });
-        return Array.from(m.values());
-      };
-      const baseRowsUnique = dedupeById(baseRows);
-      const withParentsUnique = dedupeById(withParents);
+      const syncDuration = Date.now() - startTime;
 
-      // Chunk helper
-      const chunk = (arr, size) => {
-        const chunks = [];
-        for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
-        return chunks;
-      };
-
-      // Phase 1: upsert all categories without parent_id
-      const baseChunks = chunk(baseRowsUnique, 500);
-      for (const c of baseChunks) {
-        const { error } = await supabaseService.adminClient
-          .from('categories')
-          .upsert(c, { onConflict: 'id' });
-        if (error) {
-          console.error('Error during phase 1 upsert:', error);
-          return res.status(500).json({
-            success: false,
-            message: 'Failed to sync categories (phase 1)',
-            error: error.message,
-          });
-        }
+      if (syncError) {
+        console.error('Error calling single JSON sync function:', syncError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to sync categories',
+          error: syncError.message
+        });
       }
 
-      // Phase 2: upsert categories with parent_id now that parents exist
-      const parentChunks = chunk(withParentsUnique, 500);
-      for (const c of parentChunks) {
-        const { error } = await supabaseService.adminClient
-          .from('categories')
-          .upsert(c, { onConflict: 'id' });
-        if (error) {
-          console.error('Error during phase 2 upsert:', error);
-          return res.status(500).json({
-            success: false,
-            message: 'Failed to sync categories (phase 2)',
-            error: error.message,
-          });
-        }
-      }
-
-      console.log('Category sync completed: inserted/updated', allCategories.length);
+      console.log(`ULTRA-FAST sync completed in ${syncDuration}ms!`);
+      console.log('Sync result:', syncResult);
 
       res.json({
         success: true,
         data: {
-          inserted: 0, // Supabase does not return counts per upsert batch here
-          updated: 0,
-          total: allCategories.length,
-          api_total: allCategories.length,
+          old_count: syncResult.old_count,
+          new_count: syncResult.new_count,
+          total: syncResult.new_count,
+          sync_duration_ms: syncDuration,
+          performance_improvement: 'Single operation vs thousands of UPSERTs'
         },
-        message: 'Categories synced successfully'
+        message: `Categories synced successfully in ${syncDuration}ms using single JSON operation`
       });
     } catch (error) {
       console.error('Error in syncCategories:', error);
@@ -561,17 +483,16 @@ class AdminController {
   }
 
   /**
-   * Get all categories (for admin management)
+   * Get all categories (from single JSON row with admin customizations)
    */
   async getCategories(req, res) {
     try {
-      const { data: categories, error } = await supabaseService.adminClient
-        .from('categories')
-        .select('*')
-        .order('name', { ascending: true });
+      // Get processed categories (with admin customizations applied)
+      const { data: processedCategories, error } = await supabaseService.adminClient
+        .rpc('get_processed_categories');
 
       if (error) {
-        console.error('Error fetching categories:', error);
+        console.error('Error fetching processed categories:', error);
         return res.status(500).json({
           success: false,
           message: 'Failed to fetch categories',
@@ -579,9 +500,58 @@ class AdminController {
         });
       }
 
+      // Also get metadata
+      const { data: categoryRow } = await supabaseService.adminClient
+        .from('categories')
+        .select(`
+          total_categories_count,
+          total_events_count,
+          category_view_counts,
+          featured_categories,
+          hidden_categories,
+          last_sync_at,
+          last_updated_at
+        `)
+        .eq('id', 1)
+        .single();
+
+      // Transform for backward compatibility and add metadata
+      const categories = Array.isArray(processedCategories) ? processedCategories : [];
+      
+      // Add metadata to each category
+      const enrichedCategories = categories.map(cat => {
+        const catId = cat.id?.toString();
+        const viewCount = categoryRow?.category_view_counts?.[catId] || 0;
+        const isFeatured = categoryRow?.featured_categories?.includes(catId) || false;
+        const isHidden = categoryRow?.hidden_categories?.includes(catId) || false;
+        
+        return {
+          id: parseInt(cat.id),
+          name: cat.display_name || cat.name,
+          slug: cat.slug || this.generateSlug(cat.display_name || cat.name, cat.id),
+          parent_id: cat.parent ? parseInt(cat.parent.id) : null,
+          is_visible: !isHidden,
+          is_featured: isFeatured,
+          view_count: viewCount,
+          api_data: cat, // Original data for compatibility
+          source_data: cat,
+          processed_data: cat.customizations || null,
+          sync_at: categoryRow?.last_sync_at,
+          updated_at: categoryRow?.last_updated_at
+        };
+      });
+
       res.json({
         success: true,
-        data: categories
+        data: enrichedCategories,
+        metadata: {
+          total_count: categoryRow?.total_categories_count || 0,
+          total_events: categoryRow?.total_events_count || 0,
+          featured_count: categoryRow?.featured_categories?.length || 0,
+          hidden_count: categoryRow?.hidden_categories?.length || 0,
+          last_sync: categoryRow?.last_sync_at,
+          storage_type: 'single_json_row'
+        }
       });
     } catch (error) {
       console.error('Error in getCategories:', error);
@@ -591,6 +561,15 @@ class AdminController {
         error: error.message
       });
     }
+  }
+
+  generateSlug(name, id) {
+        if (!name) return `category-${id}`;
+        return name
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')
+          .replace(/\s+/g, '-')
+          .trim();
   }
 
   /**
@@ -608,41 +587,327 @@ class AdminController {
           code: 'INVALID_VISIBILITY'
         });
       }
+      // Single-row JSON approach: manage visibility via hidden_categories array
+      const categoryIdStr = String(id);
 
-      const { data, error } = await supabaseService.adminClient
+      // Read current hidden list
+      const { data: categoriesRow, error: readError } = await supabaseService.adminClient
         .from('categories')
-        .update({ is_visible })
-        .eq('id', parseInt(id))
-        .select()
+        .select('hidden_categories')
+        .eq('id', 1)
         .single();
 
-      if (error) {
-        console.error('Error updating category visibility:', error);
+      if (readError) {
+        console.error('Error reading hidden_categories:', readError);
         return res.status(500).json({
           success: false,
           message: 'Failed to update category visibility',
-          error: error.message
+          error: readError.message
         });
       }
 
-      if (!data) {
-        return res.status(404).json({
+      const currentHidden = Array.isArray(categoriesRow?.hidden_categories)
+        ? categoriesRow.hidden_categories.map((v) => String(v))
+        : [];
+
+      let nextHidden;
+      if (is_visible) {
+        // Remove from hidden list
+        nextHidden = currentHidden.filter((v) => v !== categoryIdStr);
+      } else {
+        // Add to hidden list if not present
+        const set = new Set(currentHidden);
+        set.add(categoryIdStr);
+        nextHidden = Array.from(set);
+      }
+
+      const { error: updateError } = await supabaseService.adminClient
+        .from('categories')
+        .update({ hidden_categories: nextHidden })
+        .eq('id', 1);
+
+      if (updateError) {
+        console.error('Error writing hidden_categories:', updateError);
+        return res.status(500).json({
           success: false,
-          message: 'Category not found',
-          code: 'NOT_FOUND'
+          message: 'Failed to update category visibility',
+          error: updateError.message
         });
       }
 
       res.json({
         success: true,
-        data: data,
+        data: { id: categoryIdStr, is_visible },
         message: `Category ${is_visible ? 'shown' : 'hidden'} successfully`
       });
     } catch (error) {
       console.error('Error in updateCategoryVisibility:', error);
       res.status(500).json({
-        success: false,
+          success: false,
         message: 'Failed to update category visibility',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Update category processed data (admin customizations for single JSON row)
+   */
+  async updateCategoryProcessedData(req, res) {
+    try {
+      const { id } = req.params;
+      const { processed_data } = req.body;
+
+      if (!processed_data || typeof processed_data !== 'object') {
+        return res.status(400).json({
+          success: false,
+          message: 'processed_data must be a valid object',
+          code: 'INVALID_PROCESSED_DATA'
+        });
+      }
+
+      const { data: success, error } = await supabaseService.adminClient
+        .rpc('update_category_processed_data', {
+          category_id: id.toString(),
+          new_processed_data: JSON.stringify(processed_data)
+        });
+
+      if (error) {
+        console.error('Error updating category processed data:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update category processed data',
+          error: error.message
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Category processed data updated successfully',
+        data: { category_id: id, processed_data },
+        performance_note: 'Single JSON update operation'
+      });
+    } catch (error) {
+      console.error('Error in updateCategoryProcessedData:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update category processed data',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Update category settings (admin controls)
+   */
+  async updateCategorySettings(req, res) {
+    try {
+      const { id } = req.params;
+      const { is_visible, is_featured, admin_priority } = req.body;
+
+      // Single-row JSON approach: manage visibility/featured via arrays
+      if (typeof is_visible !== 'boolean' && typeof is_featured !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          message: 'No valid fields to update (is_visible or is_featured)',
+          code: 'NO_UPDATE_FIELDS'
+        });
+      }
+
+      const categoryIdStr = String(id);
+      // Read current featured/hidden lists
+      const { data: categoriesRow, error: readError } = await supabaseService.adminClient
+        .from('categories')
+        .select('hidden_categories, featured_categories')
+        .eq('id', 1)
+        .single();
+
+      if (readError) {
+        console.error('Error reading category settings arrays:', readError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update category settings',
+          error: readError.message
+        });
+      }
+
+      let nextHidden = Array.isArray(categoriesRow?.hidden_categories)
+        ? categoriesRow.hidden_categories.map((v) => String(v))
+        : [];
+      let nextFeatured = Array.isArray(categoriesRow?.featured_categories)
+        ? categoriesRow.featured_categories.map((v) => String(v))
+        : [];
+
+      if (typeof is_visible === 'boolean') {
+        if (is_visible) {
+          nextHidden = nextHidden.filter((v) => v !== categoryIdStr);
+        } else {
+          const s = new Set(nextHidden); s.add(categoryIdStr); nextHidden = Array.from(s);
+        }
+      }
+
+      if (typeof is_featured === 'boolean') {
+        if (is_featured) {
+          const s = new Set(nextFeatured); s.add(categoryIdStr); nextFeatured = Array.from(s);
+        } else {
+          nextFeatured = nextFeatured.filter((v) => v !== categoryIdStr);
+        }
+      }
+
+      const { error: updateError } = await supabaseService.adminClient
+        .from('categories')
+        .update({ hidden_categories: nextHidden, featured_categories: nextFeatured })
+        .eq('id', 1);
+
+      if (updateError) {
+        console.error('Error writing category settings arrays:', updateError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update category settings',
+          error: updateError.message
+        });
+      }
+
+      res.json({
+        success: true,
+        data: { id: categoryIdStr, is_visible, is_featured },
+        message: 'Category settings updated successfully'
+      });
+    } catch (error) {
+      console.error('Error in updateCategorySettings:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update category settings',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Toggle featured flag for a category (compat endpoint)
+   * Body: { is_featured: boolean }
+   */
+  async updateCategoryFeatured(req, res) {
+    try {
+      const { id } = req.params;
+      const { is_featured } = req.body;
+
+      if (typeof is_featured !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          message: 'is_featured must be a boolean',
+          code: 'INVALID_FEATURED'
+        });
+      }
+
+      const categoryIdStr = String(id);
+      const { data: categoriesRow, error: readError } = await supabaseService.adminClient
+        .from('categories')
+        .select('featured_categories')
+        .eq('id', 1)
+        .single();
+
+      if (readError) {
+        console.error('Error reading featured_categories:', readError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update category featured flag',
+          error: readError.message
+        });
+      }
+
+      let nextFeatured = Array.isArray(categoriesRow?.featured_categories)
+        ? categoriesRow.featured_categories.map((v) => String(v))
+        : [];
+
+      if (is_featured) {
+        const s = new Set(nextFeatured); s.add(categoryIdStr); nextFeatured = Array.from(s);
+      } else {
+        nextFeatured = nextFeatured.filter((v) => v !== categoryIdStr);
+      }
+
+      const { error: updateError } = await supabaseService.adminClient
+        .from('categories')
+        .update({ featured_categories: nextFeatured })
+        .eq('id', 1);
+
+      if (updateError) {
+        console.error('Error writing featured_categories:', updateError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update category featured flag',
+          error: updateError.message
+        });
+      }
+
+      res.json({
+        success: true,
+        data: { id: categoryIdStr, is_featured },
+        message: 'Category featured flag updated successfully'
+      });
+    } catch (error) {
+      console.error('Error in updateCategoryFeatured:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update category featured flag',
+          error: error.message
+        });
+    }
+  }
+
+  /**
+   * Get category analytics
+   */
+  async getCategoryAnalytics(req, res) {
+    try {
+      const { data: analytics, error } = await supabaseService.adminClient
+        .from('categories')
+        .select(`
+          id,
+          display_name,
+          is_visible,
+          is_featured,
+          total_events_count,
+          viewed_count,
+          admin_priority,
+          last_sync_at
+        `)
+        .order('viewed_count', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching category analytics:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch category analytics',
+          error: error.message
+        });
+      }
+
+      // Calculate summary stats
+      const totalCategories = analytics.length;
+      const visibleCategories = analytics.filter(cat => cat.is_visible).length;
+      const featuredCategories = analytics.filter(cat => cat.is_featured).length;
+      const totalViews = analytics.reduce((sum, cat) => sum + (cat.viewed_count || 0), 0);
+      const totalEvents = analytics.reduce((sum, cat) => sum + (cat.total_events_count || 0), 0);
+
+      res.json({
+        success: true,
+        data: {
+          summary: {
+            total_categories: totalCategories,
+            visible_categories: visibleCategories,
+            featured_categories: featuredCategories,
+            total_views: totalViews,
+            total_events: totalEvents
+          },
+          categories: analytics
+        }
+      });
+    } catch (error) {
+      console.error('Error in getCategoryAnalytics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch category analytics',
         error: error.message
       });
     }
@@ -657,18 +922,15 @@ class AdminController {
    */
   async getHomepageCategories(req, res) {
     try {
+      // Get homepage categories without join (since categories is now single JSON row)
       const { data: homepageCategories, error } = await supabaseService.adminClient
         .from('homepage_categories')
         .select(`
           id,
+          category_id,
           display_order,
           is_active,
-          created_at,
-          categories (
-            id,
-            name,
-            slug
-          )
+          created_at
         `)
         .order('display_order', { ascending: true });
 
@@ -681,9 +943,52 @@ class AdminController {
         });
       }
 
+      // Get all categories from single JSON row to enrich the data
+      const { data: allCategories } = await supabaseService.adminClient
+        .rpc('get_processed_categories');
+
+      // Create a map for quick category lookup
+      const categoryMap = new Map();
+      if (Array.isArray(allCategories)) {
+        allCategories.forEach(cat => {
+          categoryMap.set(cat.id?.toString(), {
+            id: parseInt(cat.id),
+            name: cat.display_name || cat.name,
+            slug: cat.slug || this.generateSlug(cat.display_name || cat.name, cat.id)
+          });
+        });
+      }
+
+      // Enrich homepage categories with category data
+      const enrichedCategories = homepageCategories.map(hc => {
+        const key = (hc.category_id ?? '').toString();
+        let cat = categoryMap.get(key);
+        if (!cat && Array.isArray(allCategories)) {
+          const found = allCategories.find(c => (c?.id)?.toString() === key);
+          if (found) {
+            cat = {
+              id: parseInt(found.id),
+              name: found.display_name || found.name,
+              slug: found.slug || this.generateSlug(found.display_name || found.name, found.id)
+            };
+          }
+        }
+        return {
+          id: hc.id,
+          display_order: hc.display_order,
+          is_active: hc.is_active,
+          created_at: hc.created_at,
+          categories: cat || {
+            id: parseInt(key) || key,
+            name: `Category ${key}`,
+            slug: `category-${key}`
+          }
+        };
+      });
+
       res.json({
         success: true,
-        data: homepageCategories
+        data: enrichedCategories
       });
     } catch (error) {
       console.error('Error in getHomepageCategories:', error);
@@ -700,18 +1005,15 @@ class AdminController {
    */
   async getPublicHomepageCategories(req, res) {
     try {
+      // Get homepage categories without join (since categories is now single JSON row)
       const { data: homepageCategories, error } = await supabaseService.anonClient
         .from('homepage_categories')
         .select(`
           id,
+          category_id,
           display_order,
           is_active,
-          created_at,
-          categories (
-            id,
-            name,
-            slug
-          )
+          created_at
         `)
         .eq('is_active', true)
         .order('display_order', { ascending: true });
@@ -725,9 +1027,52 @@ class AdminController {
         });
       }
 
+      // Get all categories from single JSON row to enrich the data
+      const { data: allCategories } = await supabaseService.anonClient
+        .rpc('get_processed_categories');
+
+      // Create a map for quick category lookup
+      const categoryMap = new Map();
+      if (Array.isArray(allCategories)) {
+        allCategories.forEach(cat => {
+          categoryMap.set(cat.id?.toString(), {
+            id: parseInt(cat.id),
+            name: cat.display_name || cat.name,
+            slug: cat.slug || this.generateSlug(cat.display_name || cat.name, cat.id)
+          });
+        });
+      }
+
+      // Enrich homepage categories with category data
+      const enrichedCategories = homepageCategories.map(hc => {
+        const key = (hc.category_id ?? '').toString();
+        let cat = categoryMap.get(key);
+        if (!cat && Array.isArray(allCategories)) {
+          const found = allCategories.find(c => (c?.id)?.toString() === key);
+          if (found) {
+            cat = {
+              id: parseInt(found.id),
+              name: found.display_name || found.name,
+              slug: found.slug || this.generateSlug(found.display_name || found.name, found.id)
+            };
+          }
+        }
+        return {
+          id: hc.id,
+          display_order: hc.display_order,
+          is_active: hc.is_active,
+          created_at: hc.created_at,
+          categories: cat || {
+            id: parseInt(key) || key,
+            name: `Category ${key}`,
+            slug: `category-${key}`
+          }
+        };
+      });
+
       res.json({
         success: true,
-        data: homepageCategories
+        data: enrichedCategories
       });
     } catch (error) {
       console.error('Error in getPublicHomepageCategories:', error);
@@ -740,7 +1085,7 @@ class AdminController {
   }
 
   /**
-   * Set homepage categories
+   * Set homepage categories - Delete all and restore latest version
    */
   async setHomepageCategories(req, res) {
     try {
@@ -783,48 +1128,93 @@ class AdminController {
         });
       }
 
-      // First, deactivate all current homepage categories
-      await supabaseService.adminClient
+      // Step 1: Delete ALL existing homepage categories (complete cleanup)
+      const { error: deleteError } = await supabaseService.adminClient
         .from('homepage_categories')
-        .update({ is_active: false })
-        .eq('is_active', true);
+        .delete()
+        .not('id', 'is', null); // Delete all records (avoid UUID cast issues)
 
-      // Then, insert/activate the new ones
+      if (deleteError) {
+        console.error('Error deleting existing homepage categories:', deleteError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to clear existing homepage categories',
+          error: deleteError.message
+        });
+      }
+
+      // Step 2: Insert new homepage categories (fresh start)
       const insertData = category_ids.map((categoryId, index) => ({
-        category_id: parseInt(categoryId),
+        category_id: String(categoryId),
         display_order: index + 1,
         is_active: true,
         created_by: req.userId
       }));
 
-      const { data, error } = await supabaseService.adminClient
+      const { data, error: insertError } = await supabaseService.adminClient
         .from('homepage_categories')
-        .upsert(insertData, {
-          onConflict: 'category_id,is_active'
-        })
+        .insert(insertData)
         .select(`
           id,
+          category_id,
           display_order,
           is_active,
-          categories (
-            id,
-            name,
-            slug
-          )
+          created_at
         `);
 
-      if (error) {
-        console.error('Error setting homepage categories:', error);
+      if (insertError) {
+        console.error('Error inserting new homepage categories:', insertError);
         return res.status(500).json({
           success: false,
-          message: 'Failed to set homepage categories',
-          error: error.message
+          message: 'Failed to insert new homepage categories',
+          error: insertError.message
         });
       }
 
+      // Step 3: Enrich with category details from single JSON row
+      const { data: allCategories } = await supabaseService.adminClient
+        .rpc('get_processed_categories');
+
+      const categoryMap = new Map();
+      if (Array.isArray(allCategories)) {
+        allCategories.forEach(cat => {
+          categoryMap.set(cat.id?.toString(), {
+            id: parseInt(cat.id),
+            name: cat.display_name || cat.name,
+            slug: cat.slug || this.generateSlug(cat.display_name || cat.name, cat.id)
+          });
+        });
+      }
+
+      const enriched = (data || []).map(hc => {
+        const key = (hc.category_id ?? '').toString();
+        let cat = categoryMap.get(key);
+        if (!cat && Array.isArray(allCategories)) {
+          const found = allCategories.find(c => (c?.id)?.toString() === key);
+          if (found) {
+            cat = {
+              id: parseInt(found.id),
+              name: found.display_name || found.name,
+              slug: found.slug || this.generateSlug(found.display_name || found.name, found.id)
+            };
+          }
+        }
+        return {
+          id: hc.id,
+          display_order: hc.display_order,
+          is_active: hc.is_active,
+          created_at: hc.created_at,
+          categories: cat || {
+            id: parseInt(key) || key,
+            name: `Category ${key}`,
+            slug: `category-${key}`
+          }
+        };
+      });
+
       res.json({
         success: true,
-        data: data,
+        data: enriched,
         message: 'Homepage categories updated successfully'
       });
     } catch (error) {

@@ -2,38 +2,91 @@ const ticketEvolutionService = require('../services/ticketEvolutionService');
 const supabaseService = require('../services/supabaseService');
 
 class CategoriesController {
-  // Get all categories (prefer database, fallback to API)
+  // Get all categories (from single JSON row with admin customizations applied)
   async getCategories(req, res) {
     try {
-      // 1) Try to fetch from database (public, visible categories)
-      const { data: dbCategories, error: dbError } = await supabaseService.anonClient
-        .from('categories')
-        .select('id, name, slug, parent_id, is_visible')
-        .eq('is_visible', true)
-        .order('name', { ascending: true });
+      // Get processed categories from single JSON row
+      const { data: processedCategories, error: dbError } = await supabaseService.anonClient
+        .rpc('get_processed_categories');
 
-      if (!dbError && Array.isArray(dbCategories) && dbCategories.length > 0) {
-        // Build parent map to include parent details
-        const byId = new Map();
-        dbCategories.forEach((row) => {
-          byId.set(row.id, { id: row.id, name: row.name, slug: row.slug });
+      if (!dbError && Array.isArray(processedCategories) && processedCategories.length > 0) {
+        // Get visibility settings
+        const { data: categoryRow } = await supabaseService.anonClient
+          .from('categories')
+          .select('hidden_categories, featured_categories')
+          .eq('id', 1)
+          .single();
+
+        // Base hidden set from admin settings
+        const baseHiddenIds = new Set((categoryRow?.hidden_categories || []).map((v) => String(v)));
+
+        // Build parent lookup for cascade hiding
+        const idToParent = new Map();
+        processedCategories.forEach((cat) => {
+          const id = cat?.id?.toString();
+          const parentId = cat?.parent?.id ? String(cat.parent.id) : null;
+          if (id) idToParent.set(id, parentId);
         });
 
-        const transformed = dbCategories.map((row) => ({
-          id: row.id.toString(),
-          name: row.name,
-          slug: row.slug,
-          parent: row.parent_id && byId.has(row.parent_id)
+        // Determine if a category has a hidden ancestor
+        const memo = new Map();
+        const hasHiddenAncestor = (id) => {
+          if (!id) return false;
+          if (memo.has(id)) return memo.get(id);
+          if (baseHiddenIds.has(id)) { memo.set(id, true); return true; }
+          const parentId = idToParent.get(id);
+          const result = parentId ? hasHiddenAncestor(parentId) : false;
+          memo.set(id, result);
+          return result;
+        };
+
+        // Filter out categories that are hidden OR whose ancestor is hidden
+        const visibleCategories = processedCategories.filter((cat) => {
+          const id = cat?.id?.toString();
+          if (!id) return false;
+          if (baseHiddenIds.has(id)) return false;
+          return !hasHiddenAncestor(id);
+        });
+
+        // Build parent map for relationships
+        const byId = new Map();
+        visibleCategories.forEach((cat) => {
+          byId.set(cat.id, { 
+            id: cat.id, 
+            name: cat.display_name || cat.name, 
+            slug: (cat.display_name || cat.name || '')
+              .toLowerCase()
+              .replace(/[^a-z0-9\s]/g, '')
+              .replace(/\s+/g, '-')
+              .trim() || `category-${cat.id}`
+          });
+        });
+
+        // Transform for frontend
+        const transformed = visibleCategories.map((cat) => ({
+          id: cat.id?.toString(),
+          name: cat.display_name || cat.name,
+          slug: (cat.display_name || cat.name || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, '')
+            .replace(/\s+/g, '-')
+            .trim() || `category-${cat.id}`,
+          parent: cat.parent && byId.has(cat.parent.id)
             ? {
-                id: byId.get(row.parent_id).id.toString(),
-                name: byId.get(row.parent_id).name,
-                slug: byId.get(row.parent_id).slug,
+                id: cat.parent.id?.toString(),
+                name: byId.get(cat.parent.id).name,
+                slug: byId.get(cat.parent.id).slug,
               }
             : null,
-          children: [],
+          children: [], // Will be populated by frontend if needed
         }));
 
-        return res.json({ success: true, data: transformed, source: 'db' });
+        return res.json({ 
+          success: true, 
+          data: transformed, 
+          source: 'single_json_db',
+          performance_note: 'Ultra-fast single JSON query'
+        });
       }
 
       // 2) Fallback to API if DB empty/unavailable
@@ -85,17 +138,17 @@ class CategoriesController {
     try {
       const { data: dbCategories, error: dbError } = await supabaseService.anonClient
         .from('categories')
-        .select('id, name, slug')
-        .is('parent_id', null)
+        .select('id, display_name, display_slug')
+        .is('parent_category_id', null)
         .eq('is_visible', true)
-        .order('name', { ascending: true })
+        .order('display_name', { ascending: true })
         .limit(6);
 
       if (!dbError && Array.isArray(dbCategories) && dbCategories.length > 0) {
         const mainCategories = dbCategories.map((cat) => ({
           id: cat.id.toString(),
-          name: cat.name,
-          slug: cat.slug,
+          name: cat.display_name,
+          slug: cat.display_slug,
           parent: null,
         }));
         return res.json({ success: true, data: mainCategories, source: 'db' });
@@ -161,6 +214,59 @@ class CategoriesController {
         code: 'API_UNAVAILABLE'
       });
     }
+  }
+
+  // Track category view (increment view count in single JSON row)
+  async trackCategoryView(req, res) {
+    try {
+      const { id } = req.params;
+      
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid category ID',
+          code: 'INVALID_CATEGORY_ID'
+        });
+      }
+
+      // Use the database function to track view
+      const { data: success, error } = await supabaseService.anonClient
+        .rpc('increment_category_view_count', {
+          category_id: id.toString()
+        });
+
+      if (error) {
+        console.error('Error tracking category view:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to track category view',
+          error: error.message
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Category view tracked successfully',
+        performance_note: 'Single JSON update operation'
+      });
+    } catch (error) {
+      console.error('Error in trackCategoryView:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to track category view',
+        error: error.message
+      });
+    }
+  }
+
+  // Helper method for generating slugs
+  generateSlug(name, id) {
+    if (!name) return `category-${id}`;
+    return name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, '-')
+      .trim();
   }
 }
 
