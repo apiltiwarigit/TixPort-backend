@@ -46,6 +46,20 @@ class AuthController {
         // Continue without profile - user can still authenticate
       }
 
+      // Merge user's role into profile for consistent frontend role checks
+      try {
+        const { data: roleData } = await supabaseService.adminClient
+          .from('user_roles')
+          .select('role')
+          .eq('id', result.user.id)
+          .single();
+        if (roleData) {
+          profile = profile ? { ...profile, role: roleData.role } : { id: result.user.id, role: roleData.role };
+        }
+      } catch (e) {
+        // Non-blocking
+      }
+
       res.json({
         success: true,
         data: {
@@ -207,12 +221,18 @@ class AuthController {
         // Continue without profile - user can still authenticate
       }
 
+      // Embed role into profile for frontend role checks
+      if (profile) {
+        profile = { ...profile, role: userRole };
+      } else {
+        profile = { id: userId, role: userRole };
+      }
+
       res.json({
         success: true,
         data: {
           user: req.user,
-          profile,
-          role: userRole
+          profile
         }
       });
 
@@ -403,6 +423,20 @@ class AuthController {
         profile = await supabaseService.getUserProfile(data.user.id);
       } catch (profileError) {
         console.warn('Profile fetch failed during refresh (non-critical):', profileError.message);
+      }
+
+      // Merge role into profile for consistency
+      try {
+        const { data: roleData } = await supabaseService.adminClient
+          .from('user_roles')
+          .select('role')
+          .eq('id', data.user.id)
+          .single();
+        if (roleData) {
+          profile = profile ? { ...profile, role: roleData.role } : { id: data.user.id, role: roleData.role };
+        }
+      } catch (e) {
+        // Non-blocking
       }
 
       res.json({

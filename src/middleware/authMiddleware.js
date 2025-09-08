@@ -83,7 +83,7 @@ const optionalAuth = async (req, res, next) => {
 };
 
 /**
- * Admin role middleware
+ * Admin role middleware (allows admin or owner using user_roles table)
  */
 const requireAdmin = async (req, res, next) => {
   try {
@@ -95,10 +95,23 @@ const requireAdmin = async (req, res, next) => {
       });
     }
 
-    // Check if user has admin role
-    const userProfile = await supabaseService.getUserProfile(req.userId);
-    
-    if (!userProfile || userProfile.role !== 'admin') {
+    // Check role from user_roles
+    const { data: userRole, error } = await supabaseService.adminClient
+      .from('user_roles')
+      .select('role')
+      .eq('id', req.userId)
+      .single();
+
+    if (error) {
+      console.error('Error checking user role:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to verify admin access',
+        code: 'ROLE_CHECK_ERROR'
+      });
+    }
+
+    if (!userRole || !['admin', 'owner'].includes(userRole.role)) {
       return res.status(403).json({
         success: false,
         message: 'Admin access required',
