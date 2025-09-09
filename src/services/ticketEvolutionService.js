@@ -1,6 +1,7 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const config = require('../config/config');
+const coordinateResolver = require('./coordinateResolver');
 
 class TicketEvolutionService {
   constructor() {
@@ -192,42 +193,50 @@ class TicketEvolutionService {
   }
 
   // Get events with filtering and pagination
-  async getEvents(filters = {}, page = 1, limit = 20) {
+  async getEvents(filters = {}, page = 1, limit = 20, requestId = 'unknown') {
     try {
-      // Build API parameters
-      const apiParams = {
-        page,
-        per_page: Math.min(limit, 100),
-      };
-
-      // Always request events with available tickets only
-      apiParams.only_with_available_tickets = true;
-
-      // Check cache in development mode
+      // Check cache in development mode first
       const cacheKey = this.getCacheKey('events', { filters, page, limit });
       const cachedResponse = this.getCachedResponse(cacheKey);
       if (cachedResponse) {
         return cachedResponse;
       }
 
-      // Map only essential filter parameters to API
-      const paramMappings = {
-        category_id: 'category_id',
-        lat: 'lat',
-        lon: 'lon', 
-        within: 'within',
-        ip: 'ip',
-        only_with_available_tickets: 'only_with_available_tickets'
-      };
-
-      Object.entries(paramMappings).forEach(([filter, param]) => {
-        if (filters[filter] !== undefined && filters[filter] !== null && filters[filter] !== '') {
-          apiParams[param] = filters[filter];
-        }
+      // Resolve coordinates using the coordinate resolver
+      const coordinates = await coordinateResolver.resolveCoordinates({
+        lat: filters.lat,
+        lon: filters.lon,
+        ip: filters.ip,
+        requestId
       });
 
-      // if(apiParams.ip) apiParams.ip = "185.152.167.139";
-      console.log("apiParams", apiParams);
+      // Build TEvo API parameters using the coordinate resolver
+      const baseParams = {
+        page,
+        per_page: Math.min(limit, 100),
+        category_id: filters.category_id
+      };
+
+      // Use coordinate resolver to build location parameters
+      const radiusMiles = filters.within || 50; // Default 50 miles if within is specified
+      const apiParams = coordinateResolver.buildTEvoParams(coordinates, radiusMiles, baseParams);
+
+      // Add country filter as fallback if no coordinates but we have an IP
+      if (!coordinates && filters.ip) {
+        const country = coordinateResolver.getCountryFromIP(filters.ip, requestId);
+        if (country) {
+          apiParams.country_code = country;
+          console.log(`🌍 [${requestId}] Added country filter: ${country} (coordinates unavailable)`);
+        }
+      }
+
+      // Log the final parameters being sent to TEvo
+      console.log(`📤 [${requestId}] TEvo API params:`, {
+        ...apiParams,
+        // Redact sensitive info in logs
+        ip: apiParams.ip ? '[REDACTED]' : undefined
+      });
+
       const response = await this.client.get('/events', { params: apiParams });
 
       const result = {
@@ -238,6 +247,12 @@ class TicketEvolutionService {
           total_entries: response.data.total_entries || 0,
           total_pages: Math.ceil((response.data.total_entries || 0) / limit),
         },
+        locationContext: coordinates ? {
+          source: coordinates.source,
+          accuracy: coordinates.accuracy,
+          city: coordinates.city,
+          country: coordinates.country
+        } : null
       };
 
       // Cache the response in development mode
@@ -245,7 +260,7 @@ class TicketEvolutionService {
 
       return result;
     } catch (error) {
-      console.error('❌ getEvents error:', error.message);
+      console.error(`❌ [${requestId}] getEvents error:`, error.message);
       throw error;
     }
   }

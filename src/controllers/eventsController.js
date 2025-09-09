@@ -76,7 +76,7 @@ class EventsController {
 
       console.log(`[REQUEST ${requestId}] Events API called - filters:`, Object.keys(filters));
 
-      const result = await ticketEvolutionService.getEvents(filters, pageNum, limitNum);
+      const result = await ticketEvolutionService.getEvents(filters, pageNum, limitNum, requestId);
 
       res.json({
         success: true,
@@ -84,6 +84,7 @@ class EventsController {
           events: result.events,
           pagination: result.pagination,
           filters,
+          locationContext: result.locationContext,
           requestId
         },
       });

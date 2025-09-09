@@ -29,6 +29,7 @@
     "express-rate-limit": "^7.1.5",
     "express-session": "^1.17.3",
     "express-validator": "^7.0.1",
+    "geoip-lite": "^1.4.10",
     "helmet": "^7.0.0",
     "joi": "^17.11.0",
     "jsonwebtoken": "^9.0.2",
