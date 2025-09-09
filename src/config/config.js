@@ -39,8 +39,8 @@ module.exports = {
   
   // Rate Limiting - More generous in development
   rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || (nodeEnv === 'development' ? 60 * 60 * 1000 : 15 * 60 * 1000), // 60 min in dev, 15 min in prod
-    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || (nodeEnv === 'development' ? 500 : 100), // 500 in dev, 100 in prod
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || (process.env.NODE_ENV === 'development' ? 60 * 60 * 1000 : 15 * 60 * 1000), // 60 min in dev, 15 min in prod
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || (process.env.NODE_ENV === 'development' ? 500 : 100), // 500 in dev, 100 in prod
   },
   
   // Pagination

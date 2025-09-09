@@ -5,15 +5,46 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// Validation middleware for checkout
+// Validation middleware for checkout (supports cart and direct checkout)
 const validateCheckout = [
+  body('isCartCheckout').optional().isBoolean().withMessage('isCartCheckout must be a boolean'),
   body('stripeToken').notEmpty().withMessage('Stripe token is required'),
-  body('ticketGroup.id').isInt().withMessage('Valid ticket group ID is required'),
-  body('ticketGroup.quantity').isInt({ min: 1, max: 10 }).withMessage('Quantity must be between 1 and 10'),
-  body('ticketGroup.price').isFloat({ min: 0 }).withMessage('Valid ticket price is required'),
   body('buyer.email').isEmail().withMessage('Valid email is required'),
   body('buyer.phone').optional().isMobilePhone().withMessage('Valid phone number required'),
   body('delivery.type').isIn(['Eticket', 'TMMobile', 'FedEx', 'UPS']).withMessage('Valid delivery type required'),
+
+  // Direct checkout validations when not cart checkout
+  body('ticketGroup.id')
+    .if((value, { req }) => !req.body.isCartCheckout)
+    .isInt()
+    .withMessage('Valid ticket group ID is required'),
+  body('ticketGroup.quantity')
+    .if((value, { req }) => !req.body.isCartCheckout)
+    .isInt({ min: 1, max: 10 })
+    .withMessage('Quantity must be between 1 and 10'),
+  body('ticketGroup.price')
+    .if((value, { req }) => !req.body.isCartCheckout)
+    .isFloat({ min: 0 })
+    .withMessage('Valid ticket price is required'),
+
+  // Cart checkout validations
+  body('cartItems')
+    .if((value, { req }) => req.body.isCartCheckout)
+    .isArray({ min: 1 })
+    .withMessage('cartItems must be a non-empty array'),
+  body('cartItems.*.ticketGroupId')
+    .if((value, { req }) => req.body.isCartCheckout)
+    .isInt()
+    .withMessage('cartItems.*.ticketGroupId must be an integer'),
+  body('cartItems.*.quantity')
+    .if((value, { req }) => req.body.isCartCheckout)
+    .isInt({ min: 1, max: 10 })
+    .withMessage('cartItems.*.quantity must be between 1 and 10'),
+  body('cartItems.*.price')
+    .if((value, { req }) => req.body.isCartCheckout)
+    .isFloat({ min: 0 })
+    .withMessage('cartItems.*.price must be a positive number'),
+
   (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

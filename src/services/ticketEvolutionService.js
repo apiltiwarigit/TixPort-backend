@@ -537,6 +537,35 @@ class TicketEvolutionService {
     }
   }
 
+  // Get a single ticket group by ID (for availability/price checks)
+  async getTicketGroup(ticketGroupId) {
+    try {
+      if (!ticketGroupId) {
+        throw new Error('ticketGroupId is required');
+      }
+
+      // Try cache first in development to reduce API calls
+      const cacheKey = this.getCacheKey(`ticket-group-${ticketGroupId}`, {});
+      const cached = this.getCachedResponse(cacheKey);
+      if (cached) {
+        return cached;
+      }
+
+      const response = await this.client.get(`/ticket_groups/${ticketGroupId}`);
+      const ticketGroup = response.data.ticket_group || response.data;
+
+      if (!ticketGroup || !ticketGroup.id) {
+        throw new Error('Ticket group not found');
+      }
+
+      this.setCachedResponse(cacheKey, ticketGroup);
+      return ticketGroup;
+    } catch (error) {
+      console.error('❌ getTicketGroup error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
   // Generate signature for authenticated endpoints (like v10 orders)
   generateSignature(method, path, body = '') {
     if (!this.apiSecret) {

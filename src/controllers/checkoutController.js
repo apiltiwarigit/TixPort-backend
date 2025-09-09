@@ -5,6 +5,14 @@ class CheckoutController {
   // Get Stripe publishable key for frontend
   async getStripeConfig(req, res) {
     try {
+      const publishableKey = config.ticketEvolution.stripePublishableKey;
+      if (!publishableKey) {
+        return res.status(500).json({
+          success: false,
+          message: 'Stripe publishable key is not configured.'
+        });
+      }
+
       res.json({
         publishableKey: config.ticketEvolution.stripePublishableKey,
         environment: config.ticketEvolution.environment
@@ -95,27 +103,108 @@ class CheckoutController {
         stripeToken,
         sessionId,
         ticketGroup,
+        cartItems,
         buyer,
         delivery,
         orderAmount,
-        taxSignature
+        taxSignature,
+        isCartCheckout
       } = req.body;
 
-      // Validate required fields
-      if (!stripeToken || !ticketGroup || !buyer || !delivery) {
+      // Validate required fields for different checkout types
+      if (!stripeToken || !buyer || !delivery) {
         return res.status(400).json({
           success: false,
           message: 'Missing required checkout data'
         });
       }
 
-      console.log('🛒 Processing checkout:', {
-        ticketGroupId: ticketGroup.id,
-        quantity: ticketGroup.quantity,
-        price: ticketGroup.price,
-        buyer: buyer.email,
-        delivery: delivery.type
-      });
+      // Validate items based on checkout type
+      if (isCartCheckout) {
+        if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cart checkout requires cart items'
+          });
+        }
+      } else {
+        if (!ticketGroup) {
+          return res.status(400).json({
+            success: false,
+            message: 'Direct checkout requires ticket group'
+          });
+        }
+      }
+
+      if (isCartCheckout) {
+        console.log('🛒 Processing cart checkout:', {
+          cartItems: cartItems.length,
+          totalAmount: orderAmount,
+          buyer: buyer.email,
+          delivery: delivery.type
+        });
+
+        // Pre-validate all cart items before attempting any order creation
+        try {
+          const validations = await Promise.all(
+            cartItems.map(async (item, index) => {
+              try {
+                const tg = await ticketEvolutionService.getTicketGroup(item.ticketGroupId);
+                const issues = [];
+                if (tg.state && tg.state !== 'available') {
+                  issues.push('unavailable');
+                }
+                if (typeof item.quantity === 'number' && typeof tg.quantity === 'number' && item.quantity > tg.quantity) {
+                  issues.push('insufficient_quantity');
+                }
+                return {
+                  index,
+                  ticketGroupId: item.ticketGroupId,
+                  ok: issues.length === 0,
+                  issues,
+                  current: {
+                    price: tg.price ?? tg.retail_price,
+                    quantity: tg.quantity,
+                    state: tg.state
+                  }
+                };
+              } catch (e) {
+                return {
+                  index,
+                  ticketGroupId: item.ticketGroupId,
+                  ok: false,
+                  issues: ['not_found'],
+                  current: null
+                };
+              }
+            })
+          );
+
+          const failedValidations = validations.filter(v => !v.ok);
+          if (failedValidations.length > 0) {
+            return res.status(409).json({
+              success: false,
+              message: 'Some cart items are unavailable or changed. Please review your cart.',
+              data: { failed: failedValidations }
+            });
+          }
+        } catch (validationError) {
+          console.error('❌ Cart pre-validation error:', validationError.message);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to validate cart items. Please try again.',
+            error: process.env.NODE_ENV === 'development' ? validationError.message : undefined
+          });
+        }
+      } else {
+        console.log('🛒 Processing direct checkout:', {
+          ticketGroupId: ticketGroup.id,
+          quantity: ticketGroup.quantity,
+          price: ticketGroup.price,
+          buyer: buyer.email,
+          delivery: delivery.type
+        });
+      }
 
       // Step 1: Create or get TEvo client for the buyer
       let clientId;
@@ -149,14 +238,31 @@ class CheckoutController {
           payments: [{
             type: 'credit_card',
             token: stripeToken // Stripe token from Elements
-          }],
-          ticket_group: {
-            id: ticketGroup.id,
-            price: ticketGroup.price,
-            quantity: ticketGroup.quantity
-          }
+          }]
         }
       };
+
+      // Add ticket groups based on checkout type
+      if (isCartCheckout) {
+        // For cart checkout, create multiple orders or combine into one order with multiple ticket groups
+        // TEvo API typically handles one ticket group per order, so we'll process the first item
+        // and return a mock response for demonstration
+        const primaryItem = cartItems[0];
+        orderData.order.ticket_group = {
+          id: primaryItem.ticketGroupId,
+          price: primaryItem.price,
+          quantity: primaryItem.quantity
+        };
+        
+        // Note: For multiple items, you'd typically create separate orders
+        // or check if TEvo API supports multiple ticket groups in one order
+      } else {
+        orderData.order.ticket_group = {
+          id: ticketGroup.id,
+          price: ticketGroup.price,
+          quantity: ticketGroup.quantity
+        };
+      }
 
       // Add client_id if we created one, otherwise use inline attributes
       if (clientId) {
@@ -183,22 +289,77 @@ class CheckoutController {
 
       console.log('📋 Final order data:', JSON.stringify(orderData, null, 2));
 
-      // Step 3: Create the order with TEvo
-      const orderResponse = await ticketEvolutionService.createOrder(orderData);
+      // Step 3: Create the order(s) with TEvo
+      if (isCartCheckout && Array.isArray(cartItems) && cartItems.length > 1) {
+        // Process multiple items sequentially; collect successes and failures
+        const successes = [];
+        const failures = [];
 
-      // Step 4: Return success response
-      res.json({
-        success: true,
-        message: 'Order created successfully',
-        data: {
-          orderId: orderResponse.order?.id,
-          orderUrl: orderResponse.order?.url,
-          status: orderResponse.order?.state,
-          confirmation: orderResponse.order?.id,
-          delivery: orderResponse.order?.delivery,
-          total: orderResponse.order?.total_amount || orderAmount
+        for (let i = 0; i < cartItems.length; i++) {
+          const item = cartItems[i];
+          const itemOrderData = JSON.parse(JSON.stringify(orderData));
+          itemOrderData.order.ticket_group = {
+            id: item.ticketGroupId,
+            price: item.price,
+            quantity: item.quantity
+          };
+
+          try {
+            const itemResponse = await ticketEvolutionService.createOrder(itemOrderData);
+            successes.push({
+              index: i,
+              ticketGroupId: item.ticketGroupId,
+              orderId: itemResponse.order?.id,
+              status: itemResponse.order?.state,
+              total: itemResponse.order?.total_amount
+            });
+          } catch (itemError) {
+            console.error(`❌ Failed to create order for item ${i}:`, itemError.message);
+            failures.push({
+              index: i,
+              ticketGroupId: item.ticketGroupId,
+              message: itemError.message
+            });
+          }
         }
-      });
+
+        const grandTotal = successes.reduce((sum, r) => sum + (r.total || 0), 0);
+
+        const partial = failures.length > 0 && successes.length > 0;
+        const noneSucceeded = successes.length === 0;
+
+        return res.status(200).json({
+          success: !noneSucceeded,
+          message: partial
+            ? 'Some orders failed to create. See details.'
+            : noneSucceeded
+              ? 'No orders were created.'
+              : 'Orders created successfully',
+          data: {
+            multiOrder: true,
+            partialSuccess: partial,
+            successes,
+            failures,
+            total: grandTotal || orderAmount
+          }
+        });
+      } else {
+        const orderResponse = await ticketEvolutionService.createOrder(orderData);
+
+        // Step 4: Return success response
+        return res.json({
+          success: true,
+          message: 'Order created successfully',
+          data: {
+            orderId: orderResponse.order?.id,
+            orderUrl: orderResponse.order?.url,
+            status: orderResponse.order?.state,
+            confirmation: orderResponse.order?.id,
+            delivery: orderResponse.order?.delivery,
+            total: orderResponse.order?.total_amount || orderAmount
+          }
+        });
+      }
 
     } catch (error) {
       console.error('❌ processCheckout error:', error.message);
