@@ -200,6 +200,9 @@ class TicketEvolutionService {
         per_page: Math.min(limit, 100),
       };
 
+      // Always request events with available tickets only
+      apiParams.only_with_available_tickets = true;
+
       // Check cache in development mode
       const cacheKey = this.getCacheKey('events', { filters, page, limit });
       const cachedResponse = this.getCachedResponse(cacheKey);
@@ -223,7 +226,8 @@ class TicketEvolutionService {
         }
       });
 
-      // if(apiParams.ip) apiParams.ip = "104.174.125.138";
+      // if(apiParams.ip) apiParams.ip = "185.152.167.139";
+      console.log("apiParams", apiParams);
       const response = await this.client.get('/events', { params: apiParams });
 
       const result = {

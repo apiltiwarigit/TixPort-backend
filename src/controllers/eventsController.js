@@ -68,10 +68,8 @@ class EventsController {
         console.log(`[REQUEST ${requestId}] Location filter provided but no radius specified - fetching all events`);
       }
 
-      // Ticket availability filter
-      if (only_with_available_tickets !== undefined) {
-        filters.only_with_available_tickets = only_with_available_tickets === 'true';
-      }
+      // Always enforce available tickets only
+      filters.only_with_available_tickets = true;
 
       const pageNum = Math.max(1, parseInt(page));
       const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
