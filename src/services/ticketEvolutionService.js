@@ -566,7 +566,7 @@ class TicketEvolutionService {
     }
   }
 
-  // Generate signature for authenticated endpoints (like v10 orders)
+  // Generate signature for authenticated endpoints (like v9 orders)
   generateSignature(method, path, body = '') {
     if (!this.apiSecret) {
       throw new Error('API secret is required for authenticated endpoints');
@@ -587,7 +587,7 @@ class TicketEvolutionService {
         'Content-Type': 'application/json',
         'X-Token': this.apiToken,
         'X-Signature': signature,
-        'Accept': 'application/vnd.ticketevolution.api+json; version=10',
+        'Accept': 'application/vnd.ticketevolution.api+json; version=9',
       },
       timeout: this.timeout,
     };
@@ -610,7 +610,7 @@ class TicketEvolutionService {
     try {
       console.log('🛒 Creating TEvo order:', JSON.stringify(orderData, null, 2));
       
-      const response = await this.authenticatedRequest('POST', '/v10/orders', orderData);
+      const response = await this.authenticatedRequest('POST', '/orders', orderData);
       
       console.log('✅ Order created successfully:', response.order?.id);
       return response;
