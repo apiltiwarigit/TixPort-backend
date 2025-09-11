@@ -11,12 +11,17 @@ module.exports = {
     apiSecret: process.env.TICKET_EVOLUTION_API_SECRET,
     // Use sandbox by default, production when explicitly set
     apiUrl: process.env.TICKET_EVOLUTION_API_URL || 'https://api.sandbox.ticketevolution.com/v9',
+    v10ApiUrl: process.env.TICKET_EVOLUTION_V10_API_URL || 'https://api.sandbox.ticketevolution.com/v10',
     environment: process.env.TICKET_EVOLUTION_ENV || 'sandbox', // sandbox or production
     timeout: 10000,
     retryAttempts: 3,
-    // Stripe keys for Affiliate checkout (TEvo managed)
-    stripePublishableKey: process.env.TICKET_EVOLUTION_ENV === 'production' 
-      ? 'pk_live_471dRMEW3mEgBGUy9u2kyLDB' 
+  },
+  
+  // Stripe Configuration
+  stripe: {
+    // TEvo's Stripe publishable keys per documentation
+    publishableKey: process.env.TICKET_EVOLUTION_ENV === 'production' 
+      ? 'pk_live_471dRMEW3mEgBGUy9u2kyLDB'
       : 'pk_test_WmbjeQFOTJM5Sb5PQvYXBM07',
   },
   
