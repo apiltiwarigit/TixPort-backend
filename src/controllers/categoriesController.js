@@ -2,6 +2,8 @@ const ticketEvolutionService = require('../services/ticketEvolutionService');
 const supabaseService = require('../services/supabaseService');
 
 class CategoriesController {
+  // Removed legacy getSidebarFeaturedCategories - merged into getCategories flow
+
   // Get all categories (from single JSON row with admin customizations applied)
   async getCategories(req, res) {
     try {
@@ -10,7 +12,7 @@ class CategoriesController {
         .rpc('get_processed_categories');
 
       if (!dbError && Array.isArray(processedCategories) && processedCategories.length > 0) {
-        // Get visibility settings
+        // Get visibility and featured settings (single-row categories table)
         const { data: categoryRow } = await supabaseService.anonClient
           .from('categories')
           .select('hidden_categories, featured_categories')
@@ -19,6 +21,23 @@ class CategoriesController {
 
         // Base hidden set from admin settings
         const baseHiddenIds = new Set((categoryRow?.hidden_categories || []).map((v) => String(v)));
+
+        // Normalize featured list to array of { id: string, order: number }
+        const rawFeatured = Array.isArray(categoryRow?.featured_categories)
+          ? categoryRow.featured_categories
+          : [];
+        const featuredNormalized = rawFeatured.map((item, index) => {
+          if (item && typeof item === 'object') {
+            return {
+              id: String(item.category_id),
+              order: typeof item.display_order === 'number' ? item.display_order : index + 1,
+            };
+          }
+          return { id: String(item), order: index + 1 };
+        });
+        // Sort featured by provided order
+        featuredNormalized.sort((a, b) => a.order - b.order);
+        const featuredIdSet = new Set(featuredNormalized.map((f) => f.id));
 
         // Build parent lookup for cascade hiding
         const idToParent = new Map();
@@ -41,11 +60,12 @@ class CategoriesController {
         };
 
         // Filter out categories that are hidden OR whose ancestor is hidden
+        // EXCEPT: keep if the category is featured
         const visibleCategories = processedCategories.filter((cat) => {
           const id = cat?.id?.toString();
           if (!id) return false;
-          if (baseHiddenIds.has(id)) return false;
-          return !hasHiddenAncestor(id);
+          if (baseHiddenIds.has(id) && !featuredIdSet.has(id)) return false;
+          return featuredIdSet.has(id) ? true : !hasHiddenAncestor(id);
         });
 
         // Build parent map for relationships
@@ -71,6 +91,7 @@ class CategoriesController {
             .replace(/[^a-z0-9\s]/g, '')
             .replace(/\s+/g, '-')
             .trim() || `category-${cat.id}`,
+          is_featured: featuredIdSet.has(String(cat.id)),
           parent: cat.parent && byId.has(cat.parent.id)
             ? {
                 id: cat.parent.id?.toString(),
@@ -81,11 +102,22 @@ class CategoriesController {
           children: [], // Will be populated by frontend if needed
         }));
 
-        return res.json({ 
-          success: true, 
-          data: transformed, 
+        // Reorder: move featured categories (by priority) to the front of the list
+        // 1) Build a quick lookup of transformed categories by id
+        const byIdTransformed = new Map(transformed.map((c) => [c.id, c]));
+        // 2) Build featured list (preserving only those that exist in transformed)
+        const featuredFirst = featuredNormalized
+          .map((f) => byIdTransformed.get(f.id))
+          .filter(Boolean);
+        // 3) Build the rest (excluding featured ones) preserving original order
+        const rest = transformed.filter((c) => !featuredIdSet.has(c.id));
+        const finalCategories = [...featuredFirst, ...rest];
+
+        return res.json({
+          success: true,
+          data: finalCategories,
           source: 'single_json_db',
-          performance_note: 'Ultra-fast single JSON query'
+          performance_note: 'Ultra-fast single JSON query with featured prioritization'
         });
       }
 

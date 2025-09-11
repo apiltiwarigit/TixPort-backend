@@ -434,6 +434,7 @@ CREATE TABLE IF NOT EXISTS categories (
   slug TEXT NOT NULL,
   parent_id INTEGER REFERENCES categories(id),
   is_visible BOOLEAN DEFAULT true,
+  featured_categories JSONB DEFAULT '[]'::jsonb, -- Array of featured category objects: [{category_id: 1, display_order: 1, is_active: true}]
   api_data JSONB, -- Store full API response for reference
   sync_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL

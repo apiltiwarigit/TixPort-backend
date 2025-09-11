@@ -548,21 +548,38 @@ class CheckoutController {
                 }
             );
 
-            const order = response.data;
+      const order = response.data;
 
-            console.log(`✅ Order placed successfully: ${order.oid || order.id}`);
+      console.log(`✅ Order placed successfully: ${order.oid || order.id}`);
 
-            res.json({
-                success: true,
-                data: {
-                    orderId: order.id,
-                    oid: order.oid,
-                    state: order.state,
-                    clientId: clientId,
-                    deliveryInfo: order.delivery,
-                    items: order.items || [orderData.ticket_group]
-                }
-            });
+      // Update real statistics (async, don't wait)
+      try {
+        const adminController = require('./adminController');
+        
+        // Increment tickets sold
+        adminController.incrementRealStats('tickets_sold', orderData.ticket_group.quantity);
+        
+        // Calculate money saved (simple estimate: 10% of order amount)
+        if (orderAmount && orderAmount > 0) {
+          const estimatedSavings = Math.round(orderAmount * 0.1); // 10% savings estimate
+          adminController.incrementRealStats('money_saved', estimatedSavings);
+        }
+      } catch (statsError) {
+        console.warn('⚠️ Failed to update statistics:', statsError.message);
+        // Don't fail the order for stats issues
+      }
+
+      res.json({
+        success: true,
+        data: {
+          orderId: order.id,
+          oid: order.oid,
+          state: order.state,
+          clientId: clientId,
+          deliveryInfo: order.delivery,
+          items: order.items || [orderData.ticket_group]
+        }
+      });
 
         } catch (error) {
             // console.log('error: ', error);

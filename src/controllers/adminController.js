@@ -918,6 +918,272 @@ class AdminController {
   // ===========================
 
   /**
+   * Get sidebar featured categories from categories table
+   */
+  async getSidebarFeaturedCategories(req, res) {
+    try {
+      const { data: categoriesRow, error } = await supabaseService.adminClient
+        .from('categories')
+        .select('featured_categories')
+        .eq('id', 1)
+        .single();
+
+      if (error) {
+        console.error('Error fetching sidebar featured categories:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch sidebar featured categories',
+          error: error.message
+        });
+      }
+
+      const featuredCategories = categoriesRow?.featured_categories || [];
+
+      // Get all categories for enrichment
+      const { data: allCategories } = await supabaseService.adminClient
+        .rpc('get_processed_categories');
+
+      // Create category map for enrichment
+      const categoryMap = new Map();
+      if (Array.isArray(allCategories)) {
+        allCategories.forEach(cat => {
+          categoryMap.set(cat.id?.toString(), cat);
+        });
+      }
+
+      // Enrich featured categories with full category data
+      const enrichedCategories = featuredCategories.map(featured => {
+        const category = categoryMap.get(featured.category_id?.toString());
+        return {
+          ...featured,
+          category: category ? {
+            id: category.id,
+            name: category.display_name || category.name,
+            slug: category.slug
+          } : null
+        };
+      });
+
+      return res.json({
+        success: true,
+        data: enrichedCategories.sort((a, b) => a.display_order - b.display_order)
+      });
+    } catch (error) {
+      console.error('Error in getSidebarFeaturedCategories:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Add category to sidebar featured
+   */
+  async addSidebarFeaturedCategory(req, res) {
+    try {
+      const { category_id, display_order } = req.body;
+
+      if (!category_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'category_id is required'
+        });
+      }
+
+      // Get current featured categories
+      const { data: categoriesRow, error: readError } = await supabaseService.adminClient
+        .from('categories')
+        .select('featured_categories')
+        .eq('id', 1)
+        .single();
+
+      if (readError) {
+        console.error('Error reading sidebar featured categories:', readError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to read current featured categories'
+        });
+      }
+
+      const currentFeatured = categoriesRow?.featured_categories || [];
+
+      // Check if category is already featured
+      const existingIndex = currentFeatured.findIndex(f => f.category_id === category_id);
+      if (existingIndex >= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Category is already featured'
+        });
+      }
+
+      // Add new featured category
+      const newFeaturedCategory = {
+        category_id: parseInt(category_id),
+        display_order: display_order || currentFeatured.length + 1,
+        is_active: true,
+        created_at: new Date().toISOString()
+      };
+
+      const updatedFeatured = [...currentFeatured, newFeaturedCategory];
+
+      // Update the database
+      const { error: updateError } = await supabaseService.adminClient
+        .from('categories')
+        .update({ featured_categories: updatedFeatured })
+        .eq('id', 1);
+
+      if (updateError) {
+        console.error('Error updating sidebar featured categories:', updateError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to add featured category'
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Category added to sidebar featured successfully',
+        data: newFeaturedCategory
+      });
+    } catch (error) {
+      console.error('Error in addSidebarFeaturedCategory:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Remove category from sidebar featured
+   */
+  async removeSidebarFeaturedCategory(req, res) {
+    try {
+      const { category_id } = req.params;
+
+      if (!category_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'category_id is required'
+        });
+      }
+
+      // Get current featured categories
+      const { data: categoriesRow, error: readError } = await supabaseService.adminClient
+        .from('categories')
+        .select('featured_categories')
+        .eq('id', 1)
+        .single();
+
+      if (readError) {
+        console.error('Error reading sidebar featured categories:', readError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to read current featured categories'
+        });
+      }
+
+      const currentFeatured = categoriesRow?.featured_categories || [];
+
+      // Remove the category
+      const updatedFeatured = currentFeatured.filter(f => f.category_id !== parseInt(category_id));
+
+      // Update the database
+      const { error: updateError } = await supabaseService.adminClient
+        .from('categories')
+        .update({ featured_categories: updatedFeatured })
+        .eq('id', 1);
+
+      if (updateError) {
+        console.error('Error updating sidebar featured categories:', updateError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to remove featured category'
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Category removed from sidebar featured successfully'
+      });
+    } catch (error) {
+      console.error('Error in removeSidebarFeaturedCategory:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Update sidebar featured category order
+   */
+  async updateSidebarFeaturedOrder(req, res) {
+    try {
+      const { ordered_categories } = req.body; // Array of {category_id, display_order}
+
+      if (!Array.isArray(ordered_categories)) {
+        return res.status(400).json({
+          success: false,
+          message: 'ordered_categories must be an array'
+        });
+      }
+
+      // Get current featured categories
+      const { data: categoriesRow, error: readError } = await supabaseService.adminClient
+        .from('categories')
+        .select('featured_categories')
+        .eq('id', 1)
+        .single();
+
+      if (readError) {
+        console.error('Error reading sidebar featured categories:', readError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to read current featured categories'
+        });
+      }
+
+      const currentFeatured = categoriesRow?.featured_categories || [];
+
+      // Update display orders
+      const updatedFeatured = currentFeatured.map(featured => {
+        const orderUpdate = ordered_categories.find(o => o.category_id === featured.category_id);
+        return orderUpdate ? { ...featured, display_order: orderUpdate.display_order } : featured;
+      });
+
+      // Sort by display order
+      updatedFeatured.sort((a, b) => a.display_order - b.display_order);
+
+      // Update the database
+      const { error: updateError } = await supabaseService.adminClient
+        .from('categories')
+        .update({ featured_categories: updatedFeatured })
+        .eq('id', 1);
+
+      if (updateError) {
+        console.error('Error updating sidebar featured order:', updateError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update featured category order'
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Sidebar featured category order updated successfully'
+      });
+    } catch (error) {
+      console.error('Error in updateSidebarFeaturedOrder:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  /**
    * Get homepage categories (admin version - includes inactive)
    */
   async getHomepageCategories(req, res) {
@@ -1344,7 +1610,11 @@ class AdminController {
         'location_search_radius',
         'max_homepage_categories',
         'min_homepage_categories',
-        'maintenance_mode'
+        'maintenance_mode',
+        // Public statistics
+        'stats_manual_likes',
+        'stats_manual_money_saved',
+        'stats_manual_tickets_sold'
       ];
 
       // Use admin client to avoid RLS blocking non-public but allowlisted keys;
@@ -1380,6 +1650,188 @@ class AdminController {
         message: 'Failed to fetch config',
         error: error.message
       });
+    }
+  }
+
+  /**
+   * Get dashboard statistics (manual + real values)
+   */
+  async getDashboardStats(req, res) {
+    try {
+      // Get statistics config values
+      const { data: statsConfig, error } = await supabaseService.adminClient
+        .from('project_config')
+        .select('config_key, config_value')
+        .in('config_key', [
+          'stats_manual_likes',
+          'stats_manual_money_saved', 
+          'stats_manual_tickets_sold',
+          'stats_real_money_saved',
+          'stats_real_tickets_sold'
+        ]);
+
+      if (error) {
+        console.error('Error fetching stats config:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch statistics',
+          error: error.message
+        });
+      }
+
+      // Transform to object
+      const config = {};
+      (statsConfig || []).forEach(item => {
+        config[item.config_key] = parseInt(item.config_value) || 0;
+      });
+
+      // Calculate totals (manual + real)
+      const stats = {
+        totalLikes: (config.stats_manual_likes || 0), // Only manual for now
+        totalMoneySaved: (config.stats_manual_money_saved || 0) + (config.stats_real_money_saved || 0),
+        totalTicketsSold: (config.stats_manual_tickets_sold || 0) + (config.stats_real_tickets_sold || 0),
+        breakdown: {
+          likes: {
+            manual: config.stats_manual_likes || 0,
+            real: 0 // Not implemented yet
+          },
+          moneySaved: {
+            manual: config.stats_manual_money_saved || 0,
+            real: config.stats_real_money_saved || 0
+          },
+          ticketsSold: {
+            manual: config.stats_manual_tickets_sold || 0,
+            real: config.stats_real_tickets_sold || 0
+          }
+        }
+      };
+
+      res.json({
+        success: true,
+        data: stats
+      });
+
+    } catch (error) {
+      console.error('Error in getDashboardStats:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch statistics',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Update manual statistics values
+   */
+  async updateStatistics(req, res) {
+    try {
+      const { likes, moneySaved, ticketsSold } = req.body;
+
+      const updates = [];
+
+      if (likes !== undefined) {
+        updates.push({
+          config_key: 'stats_manual_likes',
+          config_value: parseInt(likes) || 0,
+          description: 'Manual count for total likes/reviews',
+          config_type: 'stats'
+        });
+      }
+
+      if (moneySaved !== undefined) {
+        updates.push({
+          config_key: 'stats_manual_money_saved',
+          config_value: parseInt(moneySaved) || 0,
+          description: 'Manual count for money saved (in dollars)',
+          config_type: 'stats'
+        });
+      }
+
+      if (ticketsSold !== undefined) {
+        updates.push({
+          config_key: 'stats_manual_tickets_sold', 
+          config_value: parseInt(ticketsSold) || 0,
+          description: 'Manual count for tickets sold',
+          config_type: 'stats'
+        });
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No valid statistics provided'
+        });
+      }
+
+      // Update each config value
+      for (const update of updates) {
+        await supabaseService.adminClient
+          .from('project_config')
+          .upsert({
+            ...update,
+            updated_by: req.userId
+          }, {
+            onConflict: 'config_key'
+          });
+      }
+
+      res.json({
+        success: true,
+        message: 'Statistics updated successfully'
+      });
+
+    } catch (error) {
+      console.error('Error updating statistics:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update statistics',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Increment real statistics (called from checkout process)
+   */
+  async incrementRealStats(type, amount = 1) {
+    try {
+      const configKey = type === 'money_saved' ? 'stats_real_money_saved' : 'stats_real_tickets_sold';
+      
+      // Get current value
+      const { data: current, error: fetchError } = await supabaseService.adminClient
+        .from('project_config')
+        .select('config_value')
+        .eq('config_key', configKey)
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') { // Not found is OK
+        console.error('Error fetching current stat:', fetchError);
+        return;
+      }
+
+      const currentValue = current ? parseInt(current.config_value) || 0 : 0;
+      const newValue = currentValue + (parseInt(amount) || 1);
+
+      // Update value
+      await supabaseService.adminClient
+        .from('project_config')
+        .upsert({
+          config_key: configKey,
+          config_value: newValue,
+          description: type === 'money_saved' 
+            ? 'Real money saved from completed orders (in dollars)'
+            : 'Real tickets sold from completed orders',
+          config_type: 'stats'
+        }, {
+          onConflict: 'config_key'
+        });
+
+      console.log(`📊 Updated ${type}: ${currentValue} → ${newValue}`);
+      
+    } catch (error) {
+      console.error('Error incrementing real stats:', error);
+      // Don't throw - stats updates shouldn't break checkout
     }
   }
 

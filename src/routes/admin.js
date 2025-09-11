@@ -62,6 +62,12 @@ router.patch('/categories/:id/settings', requireAdmin, adminController.updateCat
 // Toggle category featured flag (compat)
 router.patch('/categories/:id/featured', requireAdmin, adminController.updateCategoryFeatured);
 
+// Sidebar featured categories
+router.get('/sidebar-featured-categories', requireAdmin, adminController.getSidebarFeaturedCategories);
+router.post('/sidebar-featured-categories', requireAdmin, adminController.addSidebarFeaturedCategory);
+router.delete('/sidebar-featured-categories/:category_id', requireAdmin, adminController.removeSidebarFeaturedCategory);
+router.patch('/sidebar-featured-categories/order', requireAdmin, adminController.updateSidebarFeaturedOrder);
+
 // Get category analytics (admin/owner only)
 router.get('/categories/analytics', requireAdmin, adminController.getCategoryAnalytics);
 
@@ -74,6 +80,16 @@ router.get('/homepage-categories', requireAdmin, adminController.getHomepageCate
 
 // Set homepage categories (admin/owner only)
 router.post('/homepage-categories', requireAdmin, adminController.setHomepageCategories);
+
+// ===========================
+// STATISTICS ROUTES
+// ===========================
+
+// Get dashboard statistics (admin/owner only)
+router.get('/dashboard/stats', requireAdmin, adminController.getDashboardStats);
+
+// Update manual statistics (admin/owner only)
+router.patch('/statistics', requireAdmin, adminController.updateStatistics);
 
 // ===========================
 // PROJECT CONFIG ROUTES
