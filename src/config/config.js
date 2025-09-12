@@ -10,19 +10,19 @@ module.exports = {
     apiToken: process.env.TICKET_EVOLUTION_API_TOKEN,
     apiSecret: process.env.TICKET_EVOLUTION_API_SECRET,
     // Use sandbox by default, production when explicitly set
-    apiUrl: process.env.TICKET_EVOLUTION_API_URL || 'https://api.sandbox.ticketevolution.com/v9',
-    v10ApiUrl: process.env.TICKET_EVOLUTION_V10_API_URL || 'https://api.sandbox.ticketevolution.com/v10',
+    apiUrl: process.env.TEVO_API_HOST 
+      ? `https://${process.env.TEVO_API_HOST}/v9`
+      : 'https://api.sandbox.ticketevolution.com/v9',
     environment: process.env.TICKET_EVOLUTION_ENV || 'sandbox', // sandbox or production
+    officeId: process.env.TEVO_OFFICE_ID || '8271', // Our office/seller ID
     timeout: 10000,
     retryAttempts: 3,
   },
   
-  // Stripe Configuration
-  stripe: {
-    // TEvo's Stripe publishable keys per documentation
-    publishableKey: process.env.TICKET_EVOLUTION_ENV === 'production' 
-      ? 'pk_live_471dRMEW3mEgBGUy9u2kyLDB'
-      : 'pk_test_WmbjeQFOTJM5Sb5PQvYXBM07',
+  // Braintree Configuration (via TEvo v9)
+  braintree: {
+    // Client tokens obtained from TEvo API dynamically
+    sandbox: process.env.TICKET_EVOLUTION_ENV !== 'production',
   },
   
   // Database Configuration

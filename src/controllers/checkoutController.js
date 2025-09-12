@@ -1,12 +1,13 @@
 const axios = require('axios');
 const config = require('../config/config');
 const tevoSignature = require('../services/tevoSignatureService');
+const ticketEvolutionService = require('../services/ticketEvolutionService');
 
 /**
- * Checkout Controller
+ * Checkout Controller - v9/Braintree Implementation
  * 
- * Handles the complete checkout workflow following the Ticket Evolution Affiliate + Stripe integration
- * Reference: https://ticketevolution.atlassian.net/wiki/spaces/API/pages/3510599681
+ * Handles the complete checkout workflow using TEvo v9 API with Braintree payments
+ * This replaces the previous v10/Stripe implementation
  */
 class CheckoutController {
     constructor() {
@@ -18,31 +19,46 @@ class CheckoutController {
         if (!sigValidation.isValid) {
             throw new Error(`Checkout configuration invalid: ${sigValidation.errors.join(', ')}`);
         }
+
+        if (!config.ticketEvolution.officeId) {
+            throw new Error('TEVO_OFFICE_ID is required for v9 checkout');
+        }
     }
 
     /**
-     * Get Stripe configuration for frontend
-     * GET /api/checkout/stripe-config
+     * Get Braintree client token for frontend
+     * POST /api/payments/braintree/client-token
      */
-    async getStripeConfig(req, res) {
+    async getBraintreeClientToken(req, res) {
         try {
+            const { clientId } = req.body;
+
+            if (!clientId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Client ID is required'
+                });
+            }
+
+            const tokenResponse = await ticketEvolutionService.getBraintreeClientToken(clientId);
+
             res.json({
                 success: true,
-                publishableKey: config.stripe.publishableKey,
-                environment: config.ticketEvolution.environment
+                clientToken: tokenResponse.client_token
             });
+
         } catch (error) {
-            console.error('❌ Error getting Stripe config:', error.message);
+            console.error('❌ Error getting Braintree client token:', error.message);
             res.status(500).json({
                 success: false,
-                message: 'Failed to get payment configuration',
+                message: 'Failed to get payment client token',
                 error: error.message
             });
         }
     }
 
     /**
-     * Create or reuse a Client in TEvo
+     * Create or lookup a Client in TEvo v9
      * POST /api/checkout/client
      */
     async createClient(req, res) {
@@ -57,7 +73,7 @@ class CheckoutController {
                 });
             }
 
-            // Prepare client data for TEvo
+            // Prepare client data for TEvo v9
             const clientData = {
                 clients: [
                     {
@@ -93,27 +109,8 @@ class CheckoutController {
                 ]
             };
 
-            // Make signed request to TEvo
-            const host = tevoSignature.extractHost(config.ticketEvolution.apiUrl);
-            const path = '/v9/clients';
-
-            const headers = tevoSignature.getSignedHeaders({
-                method: 'POST',
-                host,
-                path,
-                body: clientData
-            });
-
-            const response = await axios.post(
-                `${config.ticketEvolution.apiUrl}/clients`,
-                clientData,
-                {
-                    headers,
-                    timeout: config.ticketEvolution.timeout
-                }
-            );
-
-            const client = response.data.clients?.[0] || response.data.client;
+            const response = await ticketEvolutionService.createClient(clientData);
+            const client = response.clients?.[0] || response.client;
 
             if (!client || !client.id) {
                 throw new Error('Invalid client response from TEvo API');
@@ -127,7 +124,7 @@ class CheckoutController {
                     clientId: client.id,
                     emailAddressId: client.email_addresses?.[0]?.id,
                     phoneNumberId: client.phone_numbers?.[0]?.id,
-                    addressId: client.addresses?.[0]?.id
+                    billingAddressId: client.addresses?.[0]?.id
                 }
             });
 
@@ -168,8 +165,8 @@ class CheckoutController {
                 });
             }
 
-            // First get the ticket group to determine format
-            const ticketGroup = await this._getTicketGroup(ticketGroupId);
+            // Get the ticket group to determine format
+            const ticketGroup = await ticketEvolutionService.getTicketGroup(ticketGroupId);
 
             if (!ticketGroup) {
                 return res.status(404).json({
@@ -179,16 +176,17 @@ class CheckoutController {
             }
 
             const format = ticketGroup.format;
+            const deliveryType = ticketEvolutionService.mapDeliveryTypeFromFormat(format);
             let deliveryOptions = [];
 
             // Handle different ticket formats
-            if (format === 'Eticket') {
+            if (deliveryType === 'Eticket') {
                 deliveryOptions = [{
                     type: 'Eticket',
                     cost: 0,
                     description: 'Electronic Delivery - Instant'
                 }];
-            } else if (format === 'TM_mobile' || format === 'TMMobile') {
+            } else if (deliveryType === 'TMMobile') {
                 deliveryOptions = [{
                     type: 'TMMobile',
                     cost: 0,
@@ -198,7 +196,7 @@ class CheckoutController {
                 // Physical tickets - get shipping suggestion from TEvo
                 if (address) {
                     try {
-                        const shippingData = {
+                        const suggestion = await ticketEvolutionService.getShipmentSuggestion({
                             ticket_group_id: ticketGroupId,
                             address_attributes: {
                                 street_address: address.line1 || '',
@@ -208,28 +206,8 @@ class CheckoutController {
                                 postal_code: address.postal_code || '',
                                 country_code: address.country_code || 'US'
                             }
-                        };
-
-                        const host = tevoSignature.extractHost(config.ticketEvolution.apiUrl);
-                        const path = '/v9/shipments/suggestion';
-
-                        const headers = tevoSignature.getSignedHeaders({
-                            method: 'POST',
-                            host,
-                            path,
-                            body: shippingData
                         });
 
-                        const response = await axios.post(
-                            `${config.ticketEvolution.apiUrl}/shipments/suggestion`,
-                            shippingData,
-                            {
-                                headers,
-                                timeout: config.ticketEvolution.timeout
-                            }
-                        );
-
-                        const suggestion = response.data;
                         deliveryOptions = [{
                             type: 'FedEx',
                             cost: suggestion.cost || 15.00, // Fallback cost
@@ -266,6 +244,7 @@ class CheckoutController {
                 data: {
                     ticketGroupId,
                     format,
+                    deliveryType,
                     shippingOptions: deliveryOptions
                 }
             });
@@ -295,7 +274,7 @@ class CheckoutController {
                 });
             }
 
-            const taxData = {
+            const taxQuote = await ticketEvolutionService.createTaxQuote({
                 ticket_group_id: ticketGroupId,
                 quantity: parseInt(quantity),
                 retail: {
@@ -303,28 +282,7 @@ class CheckoutController {
                     shipping: parseFloat(shipping),
                     service_fee: parseFloat(serviceFee)
                 }
-            };
-
-            const host = tevoSignature.extractHost(config.ticketEvolution.apiUrl);
-            const path = '/v9/tax_quotes';
-
-            const headers = tevoSignature.getSignedHeaders({
-                method: 'POST',
-                host,
-                path,
-                body: taxData
             });
-
-            const response = await axios.post(
-                `${config.ticketEvolution.apiUrl}/tax_quotes`,
-                taxData,
-                {
-                    headers,
-                    timeout: config.ticketEvolution.timeout
-                }
-            );
-
-            const taxQuote = response.data;
 
             res.json({
                 success: true,
@@ -356,42 +314,45 @@ class CheckoutController {
      */
     async calculateOrderDetails(req, res) {
         try {
-            const { eventId, ticketGroupId, quantity, zipCode, orderAmount } = req.body;
+            const { ticketGroupId, quantity, retailUnitPrice, shippingAddress } = req.body;
 
-            if (!ticketGroupId || !quantity) {
+            if (!ticketGroupId || !quantity || !retailUnitPrice) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Ticket group ID and quantity are required'
+                    message: 'Ticket group ID, quantity, and retail unit price are required'
                 });
             }
 
-            // Get delivery pricing directly
-            const deliveryResult = await this._getDeliveryPricingInternal(ticketGroupId);
+            // Get delivery pricing
+            const deliveryResult = await this._getDeliveryPricingInternal(ticketGroupId, shippingAddress);
 
-            // Get tax quote if we have an address/zip
+            // Get tax quote
             let taxQuote = null;
-            if (orderAmount && zipCode) {
-                try {
-                    taxQuote = await this._getTaxQuoteInternal({
-                        ticketGroupId,
-                        quantity,
-                        retailPrice: orderAmount / quantity,
-                        shipping: 0,
-                        serviceFee: 0
-                    });
-                } catch (taxError) {
-                    console.warn('⚠️ Tax quote failed, proceeding without:', taxError.message);
-                }
+            try {
+                const taxResponse = await ticketEvolutionService.createTaxQuote({
+                    ticket_group_id: ticketGroupId,
+                    quantity,
+                    retail: {
+                        price: retailUnitPrice,
+                        shipping: deliveryResult.shippingOptions[0]?.cost || 0,
+                        service_fee: 0
+                    }
+                });
+
+                taxQuote = {
+                    tax_amount: taxResponse.retail?.tax || 0,
+                    signature: taxResponse.tax_signature
+                };
+            } catch (taxError) {
+                console.warn('⚠️ Tax quote failed, proceeding without:', taxError.message);
             }
 
             res.json({
                 success: true,
                 data: {
                     shippingOptions: deliveryResult.shippingOptions,
-                    taxQuote: taxQuote ? {
-                        tax_amount: taxQuote.taxAmount,
-                        signature: taxQuote.signature
-                    } : null
+                    deliveryType: deliveryResult.deliveryType,
+                    taxQuote: taxQuote
                 }
             });
 
@@ -406,25 +367,27 @@ class CheckoutController {
     }
 
     /**
-     * Process the complete checkout
+     * Process the complete v9 checkout with Braintree
      * POST /api/checkout/process
      */
     async processCheckout(req, res) {
         try {
             const {
-                stripeToken,
+                tevoClientId,
+                braintreeNonce,
+                ticketGroupId,
+                quantity,
+                retailUnitPrice,
+                email,
+                phone,
+                shippingAddress,
                 sessionId,
-                ticketGroup,
-                cartItems, // For cart checkout
-                buyer,
-                delivery,
-                orderAmount,
-                taxSignature,
-                isCartCheckout = false
+                isCartCheckout = false,
+                cartItems // For future cart support
             } = req.body;
 
             // Validate required fields
-            if (!stripeToken || !buyer || !delivery) {
+            if (!braintreeNonce || !ticketGroupId || !quantity || !retailUnitPrice || !email || !phone) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing required checkout information'
@@ -432,165 +395,194 @@ class CheckoutController {
             }
 
             // Get client IP for fraud protection
-            const clientIP = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'];
+            const clientIP = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || '127.0.0.1';
 
-            // Create client first
-            const clientResult = await this._createClientInternal({
-                name: `${buyer.firstName} ${buyer.lastName}`,
-                email: buyer.email,
-                phone: buyer.phone,
-                address: delivery.address
-            });
+            // Ensure IPv4 format if possible
+            const ipv4 = clientIP.includes('::ffff:') ? clientIP.replace('::ffff:', '') : clientIP;
 
-            const clientId = clientResult.clientId;
+            let clientId = tevoClientId;
+            let billingAddressId = null;
 
-            // Handle single item vs cart checkout
-            let orderData;
-            if (isCartCheckout && cartItems) {
-                // For now, process the first item (full cart support would require multiple orders)
-                const primaryItem = cartItems[0];
-                orderData = {
-                    ticket_group: {
-                        id: primaryItem.ticketGroupId,
-                        quantity: primaryItem.quantity,
-                        price: primaryItem.price
-                    }
-                };
-            } else if (ticketGroup) {
-                orderData = {
-                    ticket_group: {
-                        id: ticketGroup.id,
-                        quantity: ticketGroup.quantity,
-                        price: ticketGroup.price
-                    }
-                };
-            } else {
-                throw new Error('No ticket information provided');
+            // Create client if not provided
+            if (!clientId) {
+                const clientResult = await this._createClientInternal({
+                    name: `${email.split('@')[0]}`, // Use email prefix as fallback name
+                    email,
+                    phone,
+                    address: shippingAddress
+                });
+                clientId = clientResult.clientId;
+                billingAddressId = clientResult.billingAddressId;
             }
 
-            // Prepare order payload for TEvo v10 API
-            const orderPayload = {
-                order: {
-                    client_id: clientId,
-                    created_by_ip_address: clientIP || '127.0.0.1',
-                    session_id: sessionId,
-                    delivery: {
-                        type: delivery.type,
-                        cost: delivery.cost || 0,
-                        email_address_attributes: { address: buyer.email },
-                        phone_number_attributes: { number: buyer.phone.replace(/\D/g, '') },
-                        ...(delivery.address && {
-                            address_attributes: {
-                                street_address: delivery.address.line1 || '',
-                                extended_address: delivery.address.line2 || '',
-                                locality: delivery.address.city || '',
-                                region: delivery.address.state || '',
-                                postal_code: delivery.address.postal_code || '',
-                                country_code: delivery.address.country_code || 'US',
-                                label: 'shipping',
-                                is_primary: true
-                            }
-                        })
-                    },
-                    ticket_group: orderData.ticket_group,
-                    payments: [
-                        {
-                            type: 'credit_card',
-                            token: stripeToken,
-                            address_attributes: {
-                                street_address: delivery.address?.line1 || '',
-                                extended_address: delivery.address?.line2 || '',
-                                locality: delivery.address?.city || '',
-                                region: delivery.address?.state || '',
-                                postal_code: delivery.address?.postal_code || '',
-                                country_code: delivery.address?.country_code || 'US',
-                                label: 'billing',
-                                is_primary: true
-                            }
+            // Get ticket group to determine delivery type
+            const ticketGroup = await ticketEvolutionService.getTicketGroup(ticketGroupId);
+            if (!ticketGroup) {
+                throw new Error('Ticket group not found');
+            }
+
+            const deliveryType = ticketEvolutionService.mapDeliveryTypeFromFormat(ticketGroup.format);
+
+            // Get shipping cost for physical tickets
+            let shipping = 0;
+            if (deliveryType === 'FedEx' && shippingAddress) {
+                try {
+                    const shippingSuggestion = await ticketEvolutionService.getShipmentSuggestion({
+                        ticket_group_id: ticketGroupId,
+                        address_attributes: {
+                            street_address: shippingAddress.line1 || '',
+                            extended_address: shippingAddress.line2 || '',
+                            locality: shippingAddress.city || '',
+                            region: shippingAddress.state || '',
+                            postal_code: shippingAddress.postal_code || '',
+                            country_code: shippingAddress.country_code || 'US'
                         }
-                    ],
-                    service_fee: 0,
-                    shipping: delivery.cost || 0,
-                    discount: 0,
-                    ...(taxSignature && {
-                        tax_signature: taxSignature
-                    })
+                    });
+                    shipping = shippingSuggestion.cost || 15.00;
+                } catch (shippingError) {
+                    console.warn('⚠️ Shipping suggestion failed, using default cost:', shippingError.message);
+                    shipping = 15.00;
                 }
+            }
+
+            // Get tax quote
+            let tax = 0;
+            let taxSignature = null;
+            try {
+                const taxResponse = await ticketEvolutionService.createTaxQuote({
+                    ticket_group_id: ticketGroupId,
+                    quantity,
+                    retail: {
+                        price: retailUnitPrice,
+                        shipping,
+                        service_fee: 0
+                    }
+                });
+                tax = taxResponse.retail?.tax || 0;
+                taxSignature = taxResponse.tax_signature;
+            } catch (taxError) {
+                console.warn('⚠️ Tax quote failed, proceeding without tax:', taxError.message);
+            }
+
+            // Build shipment object
+            const shipment = {
+                type: deliveryType,
+                email_address_attributes: { address: email },
+                phone_number_attributes: { number: phone.replace(/\D/g, '') },
+                items: [{
+                    ticket_group_id: ticketGroupId,
+                    quantity: parseInt(quantity),
+                    price: parseFloat(retailUnitPrice)
+                }]
             };
 
-            // Make signed request to TEvo v10 Orders API
-            const host = tevoSignature.extractHost(config.ticketEvolution.v10ApiUrl);
-            const path = '/v10/orders';
+            // Add shipping address for physical tickets
+            if (deliveryType === 'FedEx' && shippingAddress) {
+                shipment.address_attributes = {
+                    street_address: shippingAddress.line1 || '',
+                    extended_address: shippingAddress.line2 || '',
+                    locality: shippingAddress.city || '',
+                    region: shippingAddress.state || '',
+                    postal_code: shippingAddress.postal_code || '',
+                    country_code: shippingAddress.country_code || 'US'
+                };
+            }
 
-            const headers = tevoSignature.getSignedHeaders({
-                method: 'POST',
-                host,
-                path,
-                body: orderPayload,
-                apiVersion: 'v10'
-            });
-
-            console.log(`🛒 Placing order for client ${clientId}:`, {
-                ticketGroup: orderData.ticket_group,
-                delivery: delivery.type,
-                amount: orderAmount
-            });
-
-            console.log('payload: ', orderPayload);
-            console.log('headers: ', headers);
-
-            const response = await axios.post(
-                `${config.ticketEvolution.v10ApiUrl}/orders`,
-                orderPayload,
-                {
-                    headers,
-                    timeout: config.ticketEvolution.timeout
+            // Create order via v9 API
+            const orderResponse = await ticketEvolutionService.createOrderV9({
+                seller_id: config.ticketEvolution.officeId,
+                client_id: clientId,
+                billing_address_id: billingAddressId,
+                created_by_ip_address: ipv4,
+                session_id: sessionId || `session_${Date.now()}`,
+                shipment,
+                totals: {
+                    service_fee: 0,
+                    shipping,
+                    discount: 0,
+                    tax,
+                    tax_signature: taxSignature
+                },
+                payment: {
+                    payment_method_nonce: braintreeNonce
                 }
-            );
+            });
 
-      const order = response.data;
+            const order = orderResponse.orders?.[0] || orderResponse.order;
 
-      console.log(`✅ Order placed successfully: ${order.oid || order.id}`);
+            if (!order) {
+                throw new Error('Invalid order response from TEvo API');
+            }
 
-      // Update real statistics (async, don't wait)
-      try {
-        const adminController = require('./adminController');
-        
-        // Increment tickets sold
-        adminController.incrementRealStats('tickets_sold', orderData.ticket_group.quantity);
-        
-        // Calculate money saved (simple estimate: 10% of order amount)
-        if (orderAmount && orderAmount > 0) {
-          const estimatedSavings = Math.round(orderAmount * 0.1); // 10% savings estimate
-          adminController.incrementRealStats('money_saved', estimatedSavings);
-        }
-      } catch (statsError) {
-        console.warn('⚠️ Failed to update statistics:', statsError.message);
-        // Don't fail the order for stats issues
-      }
+            console.log(`✅ v9 Order placed successfully: ${order.oid || order.id}`);
 
-      res.json({
-        success: true,
-        data: {
-          orderId: order.id,
-          oid: order.oid,
-          state: order.state,
-          clientId: clientId,
-          deliveryInfo: order.delivery,
-          items: order.items || [orderData.ticket_group]
-        }
-      });
+            // Update real statistics (async, don't wait)
+            try {
+                const adminController = require('./adminController');
+
+                // Increment tickets sold
+                adminController.incrementRealStats('tickets_sold', quantity);
+
+                // Calculate money saved (simple estimate: 10% of order amount)
+                const orderAmount = retailUnitPrice * quantity + shipping + tax;
+                if (orderAmount > 0) {
+                    const estimatedSavings = Math.round(orderAmount * 0.1); // 10% savings estimate
+                    adminController.incrementRealStats('money_saved', estimatedSavings);
+                }
+            } catch (statsError) {
+                console.warn('⚠️ Failed to update statistics:', statsError.message);
+                // Don't fail the order for stats issues
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    orderId: order.id,
+                    oid: order.oid,
+                    state: order.state,
+                    clientId: clientId,
+                    deliveryInfo: order.delivery,
+                    deliveryType,
+                    total: {
+                        subtotal: retailUnitPrice * quantity,
+                        shipping,
+                        tax,
+                        total: retailUnitPrice * quantity + shipping + tax
+                    },
+                    items: order.items || [{
+                        ticket_group_id: ticketGroupId,
+                        quantity,
+                        price: retailUnitPrice
+                    }]
+                }
+            });
 
         } catch (error) {
-            // console.log('error: ', error);
-            console.error('❌ Checkout processing error:', error.message);
+            console.error('❌ v9 Checkout processing error:', error.message);
 
+            // Map common v9 errors
             if (error.response?.status === 422) {
                 const errorData = error.response.data;
+                let errorMessage = 'Order validation failed';
+
+                if (errorData?.message?.includes('Incorrect Delivery Specified')) {
+                    errorMessage = 'Delivery type does not match ticket format. Please refresh and try again.';
+                } else if (errorData?.message?.includes('Not enough tickets') || errorData?.message?.includes('InvalidTicketSplit')) {
+                    errorMessage = 'Ticket availability has changed. Please select tickets again.';
+                } else if (errorData?.message?.includes('Price changed')) {
+                    errorMessage = 'Ticket price has changed. Please refresh and try again.';
+                }
+
                 res.status(400).json({
                     success: false,
-                    message: 'Order validation failed',
+                    message: errorMessage,
                     details: errorData?.message || errorData?.error,
+                    error: error.message
+                });
+            } else if (error.response?.status === 401) {
+                res.status(401).json({
+                    success: false,
+                    message: 'API signature validation failed',
                     error: error.message
                 });
             } else {
@@ -669,34 +661,9 @@ class CheckoutController {
         }
     }
 
-    /**
-     * Helper method to get ticket group details
-     */
-    async _getTicketGroup(ticketGroupId) {
-        try {
-            const host = tevoSignature.extractHost(config.ticketEvolution.apiUrl);
-            const path = `/v9/ticket_groups/${ticketGroupId}`;
-
-            const headers = tevoSignature.getSignedHeaders({
-                method: 'GET',
-                host,
-                path
-            });
-
-            const response = await axios.get(
-                `${config.ticketEvolution.apiUrl}/ticket_groups/${ticketGroupId}`,
-                {
-                    headers,
-                    timeout: config.ticketEvolution.timeout
-                }
-            );
-
-            return response.data.ticket_group || response.data;
-        } catch (error) {
-            console.error(`❌ Error fetching ticket group ${ticketGroupId}:`, error.message);
-            return null;
-        }
-    }
+    // ===========================
+    // HELPER METHODS
+    // ===========================
 
     /**
      * Internal helper for creating clients
@@ -737,26 +704,8 @@ class CheckoutController {
             ]
         };
 
-        const host = tevoSignature.extractHost(config.ticketEvolution.apiUrl);
-        const path = '/v9/clients';
-
-        const headers = tevoSignature.getSignedHeaders({
-            method: 'POST',
-            host,
-            path,
-            body: clientData
-        });
-
-        const response = await axios.post(
-            `${config.ticketEvolution.apiUrl}/clients`,
-            clientData,
-            {
-                headers,
-                timeout: config.ticketEvolution.timeout
-            }
-        );
-
-        const client = response.data.clients?.[0] || response.data.client;
+        const response = await ticketEvolutionService.createClient(clientData);
+        const client = response.clients?.[0] || response.client;
 
         if (!client || !client.id) {
             throw new Error('Invalid client response from TEvo API');
@@ -766,7 +715,7 @@ class CheckoutController {
             clientId: client.id,
             emailAddressId: client.email_addresses?.[0]?.id,
             phoneNumberId: client.phone_numbers?.[0]?.id,
-            addressId: client.addresses?.[0]?.id
+            billingAddressId: client.addresses?.[0]?.id
         };
     }
 
@@ -774,22 +723,23 @@ class CheckoutController {
      * Internal helper for delivery pricing
      */
     async _getDeliveryPricingInternal(ticketGroupId, address = null) {
-        const ticketGroup = await this._getTicketGroup(ticketGroupId);
+        const ticketGroup = await ticketEvolutionService.getTicketGroup(ticketGroupId);
 
         if (!ticketGroup) {
             throw new Error('Ticket group not found');
         }
 
         const format = ticketGroup.format;
+        const deliveryType = ticketEvolutionService.mapDeliveryTypeFromFormat(format);
         let deliveryOptions = [];
 
-        if (format === 'Eticket') {
+        if (deliveryType === 'Eticket') {
             deliveryOptions = [{
                 type: 'Eticket',
                 cost: 0,
                 description: 'Electronic Delivery - Instant'
             }];
-        } else if (format === 'TM_mobile' || format === 'TMMobile') {
+        } else if (deliveryType === 'TMMobile') {
             deliveryOptions = [{
                 type: 'TMMobile',
                 cost: 0,
@@ -807,49 +757,8 @@ class CheckoutController {
         return {
             ticketGroupId,
             format,
+            deliveryType,
             shippingOptions: deliveryOptions
-        };
-    }
-
-    /**
-     * Internal helper for tax quotes
-     */
-    async _getTaxQuoteInternal({ ticketGroupId, quantity, retailPrice, shipping = 0, serviceFee = 0 }) {
-        const taxData = {
-            ticket_group_id: ticketGroupId,
-            quantity: parseInt(quantity),
-            retail: {
-                price: parseFloat(retailPrice),
-                shipping: parseFloat(shipping),
-                service_fee: parseFloat(serviceFee)
-            }
-        };
-
-        const host = tevoSignature.extractHost(config.ticketEvolution.apiUrl);
-        const path = '/v9/tax_quotes';
-
-        const headers = tevoSignature.getSignedHeaders({
-            method: 'POST',
-            host,
-            path,
-            body: taxData
-        });
-
-        const response = await axios.post(
-            `${config.ticketEvolution.apiUrl}/tax_quotes`,
-            taxData,
-            {
-                headers,
-                timeout: config.ticketEvolution.timeout
-            }
-        );
-
-        const taxQuote = response.data;
-
-        return {
-            taxAmount: taxQuote.retail?.tax || 0,
-            signature: taxQuote.tax_signature,
-            breakdown: taxQuote.retail
         };
     }
 }

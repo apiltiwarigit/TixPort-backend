@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS orders (
   -- Payment information
   payment_method TEXT, -- card, paypal, etc.
   payment_status TEXT DEFAULT 'pending', -- pending, paid, failed, refunded
-  payment_intent_id TEXT, -- Stripe payment intent ID
+  payment_nonce TEXT, -- Braintree payment method nonce
+  transaction_id TEXT, -- Braintree/TEvo transaction ID
   
   -- Timestamps
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,

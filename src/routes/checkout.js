@@ -6,16 +6,16 @@ const { authenticateToken } = require('../middleware/authMiddleware');
 /**
  * Checkout Routes
  * 
- * Implements the complete Ticket Evolution Affiliate + Stripe checkout workflow
- * Following the official integration guide
+ * Implements the complete Ticket Evolution v9/Braintree checkout workflow
+ * Replaces the previous v10/Stripe implementation
  */
 
 // ===========================
 // PUBLIC ROUTES (NO AUTH REQUIRED)
 // ===========================
 
-// GET /api/checkout/stripe-config - Get Stripe publishable key for frontend
-router.get('/stripe-config', checkoutController.getStripeConfig.bind(checkoutController));
+// POST /api/payments/braintree/client-token - Get Braintree client token for frontend
+router.post('/payments/braintree/client-token', checkoutController.getBraintreeClientToken.bind(checkoutController));
 
 // POST /api/checkout/calculate - Calculate order details (delivery + tax)
 router.post('/calculate', checkoutController.calculateOrderDetails.bind(checkoutController));

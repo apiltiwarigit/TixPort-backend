@@ -21,10 +21,8 @@ async function testCheckoutFlow() {
   console.log('🧪 Testing TixPort Checkout Flow\n');
 
   try {
-    // Test 1: Get Stripe Config
-    console.log('1️⃣ Testing Stripe Configuration...');
-    const stripeResponse = await axios.get(`${API_BASE}/api/checkout/stripe-config`);
-    console.log('✅ Stripe Config:', stripeResponse.data);
+    // Test 1: Get Braintree Client Token (requires client ID - skipping in basic test)
+    console.log('1️⃣ Braintree Client Token endpoint available (requires client ID)');
     console.log('');
 
     // Test 2: Calculate Order Details

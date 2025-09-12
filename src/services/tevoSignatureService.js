@@ -99,9 +99,7 @@ class TevoSignatureService {
       'X-Token': config.ticketEvolution.apiToken,
       'X-Signature': signature,
       'Content-Type': 'application/json',
-      'Accept': options.apiVersion === 'v10' 
-        ? 'application/vnd.ticketevolution.api+json; version=10'
-        : 'application/vnd.ticketevolution.api+json; version=9',
+      'Accept': 'application/json', // Use standard Accept header for v9
     };
   }
 

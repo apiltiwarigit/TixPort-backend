@@ -1,6 +1,7 @@
 const axios = require('axios');
 const config = require('../config/config');
 const coordinateResolver = require('./coordinateResolver');
+const tevoSignature = require('./tevoSignatureService');
 
 class TicketEvolutionService {
   constructor() {
@@ -23,7 +24,7 @@ class TicketEvolutionService {
     // Create axios instance with default configuration
     this.client = axios.create({
       baseURL: this.baseURL,
-      timeout: this.timeout,
+      // timeout: this.timeout,
       headers: {
         'X-Token': this.apiToken,
         'Content-Type': 'application/json',
@@ -37,6 +38,30 @@ class TicketEvolutionService {
         if (process.env.NODE_ENV === 'development') {
           console.log(`📤 ${request.method?.toUpperCase()} ${request.url}`);
         }
+
+        // Compute and attach X-Signature for every v9 request
+        try {
+          const host = tevoSignature.extractHost(this.baseURL);
+          const basePath = new URL(this.baseURL).pathname || '';
+          const relativeUrl = request.url || '';
+          const path = `${basePath}${relativeUrl.startsWith('/') ? relativeUrl : `/${relativeUrl}`}`;
+
+          // Build signature options
+          const method = (request.method || 'GET').toUpperCase();
+          const query = request.params || {};
+
+          let body = null;
+          if (['POST', 'PUT', 'PATCH'].includes(method)) {
+            // Ensure we sign the JSON object, not a pre-stringified body
+            body = typeof request.data === 'string' ? JSON.parse(request.data) : (request.data || {});
+          }
+
+          const signature = tevoSignature.generateSignature({ method, host, path, query, body });
+          request.headers['X-Signature'] = signature;
+        } catch (signError) {
+          console.error('❌ Failed to attach TEvo X-Signature:', signError.message);
+        }
+
         return request;
       },
       (error) => {
@@ -170,22 +195,49 @@ class TicketEvolutionService {
     }
   }
 
-  // Error handler
+  // Error handler - logs actual TicketEvolution API error messages
   handleError(error) {
     if (error.response) {
       const { status, data } = error.response;
+
+      // Log the actual error response from TicketEvolution API
+      console.error('🔴 TicketEvolution API Error Response:', {
+        status,
+        data,
+        url: error.config?.url,
+        method: error.config?.method
+      });
+
+      // Use actual error message from API if available
+      const apiMessage = data?.message || data?.error || data?.errors?.[0]?.message || data?.errors;
+
       switch (status) {
-        case 401: return new Error('Invalid API token or unauthorized access');
-        case 403: return new Error('Access forbidden - check API permissions');
-        case 404: return new Error('Resource not found');
-        case 422: return new Error(data?.message || 'Invalid parameters sent to API');
-        case 429: return new Error('Rate limit exceeded - please try again later');
-        case 500: return new Error('TicketEvolution API server error');
-        default: return new Error(data?.message || data?.error || `API error: ${status}`);
+        case 401:
+          return new Error(apiMessage || 'Invalid API token or unauthorized access');
+        case 403:
+          return new Error(apiMessage || 'Access forbidden - check API permissions');
+        case 404:
+          return new Error(apiMessage || 'Resource not found');
+        case 422:
+          return new Error(apiMessage || 'Invalid parameters sent to API');
+        case 429:
+          return new Error(apiMessage || 'Rate limit exceeded - please try again later');
+        case 500:
+          return new Error(apiMessage || 'TicketEvolution API server error');
+        default:
+          return new Error(apiMessage || `API error: ${status}`);
       }
     } else if (error.request) {
+      // Log request details for debugging
+      console.error('🔴 TicketEvolution API Request Error:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        timeout: error.config?.timeout
+      });
       return new Error('No response from TicketEvolution API - check connection');
     } else {
+      // Log unexpected error details
+      console.error('🔴 TicketEvolution API Unexpected Error:', error);
       return new Error(error.message || 'Unknown error occurred');
     }
   }
@@ -598,6 +650,154 @@ class TicketEvolutionService {
   }
 
 
+
+  // ===========================
+  // v9 BRAINTREE CHECKOUT METHODS
+  // ===========================
+
+  /**
+   * Create a client in TEvo v9
+   * @param {Object} payload - Client data payload
+   * @returns {Promise<Object>} Client response
+   */
+  async createClient(payload) {
+    try {
+      const response = await this.client.post('/clients', payload);
+      return response.data;
+    } catch (error) {
+      console.error('❌ createClient error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Add address to existing client
+   * @param {number} clientId - Client ID
+   * @param {Object} address - Address data
+   * @returns {Promise<Object>} Address response
+   */
+  async addClientAddress(clientId, address) {
+    try {
+      const payload = { addresses: [address] };
+      const response = await this.client.post(`/clients/${clientId}/addresses`, payload);
+      return response.data;
+    } catch (error) {
+      console.error('❌ addClientAddress error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Get Braintree client token for payment processing
+   * @param {number} clientId - Client ID
+   * @returns {Promise<Object>} Client token response
+   */
+  async getBraintreeClientToken(clientId) {
+    try {
+      const response = await this.client.post(`/clients/${clientId}/braintree_client_token`, {});
+      return response.data;
+    } catch (error) {
+      console.error('❌ getBraintreeClientToken error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Create tax quote for order
+   * @param {Object} params - Tax quote parameters
+   * @returns {Promise<Object>} Tax quote response
+   */
+  async createTaxQuote({ ticket_group_id, quantity, retail }) {
+    try {
+      const payload = {
+        ticket_group_id,
+        quantity,
+        retail
+      };
+      const response = await this.client.post('/tax_quotes', payload);
+      return response.data;
+    } catch (error) {
+      console.error('❌ createTaxQuote error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Get shipping suggestion for physical tickets
+   * @param {Object} params - Shipment suggestion parameters
+   * @returns {Promise<Object>} Shipment suggestion response
+   */
+  async getShipmentSuggestion({ ticket_group_id, address_attributes }) {
+    try {
+      const payload = {
+        ticket_group_id,
+        address_attributes
+      };
+      const response = await this.client.post('/shipments/suggestion', payload);
+      return response.data;
+    } catch (error) {
+      console.error('❌ getShipmentSuggestion error:', error.message);
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Map delivery type from ticket format
+   * @param {string} format - Ticket format from listing
+   * @returns {string} Delivery type for v9 orders
+   */
+  mapDeliveryTypeFromFormat(format) {
+    const f = (format || '').toLowerCase();
+    if (f.includes('tm_mobile') || f.includes('mobile')) return 'TMMobile';
+    if (f.includes('eticket')) return 'Eticket';
+    // fallbacks for physical
+    return 'FedEx';
+  }
+
+  /**
+   * Create order via v9 API with Braintree payment
+   * @param {Object} orderData - Order creation data
+   * @returns {Promise<Object>} Order response
+   */
+  async createOrderV9({
+    seller_id,
+    client_id,
+    billing_address_id,
+    created_by_ip_address,
+    session_id,
+    shipment,   // { type, email_address_id|attributes, phone_number_id|attributes, items: [{ ticket_group_id, quantity, price }] }
+    totals,     // { service_fee, shipping, discount, tax, tax_signature }
+    payment     // { payment_method_nonce }
+  }) {
+    try {
+      const body = {
+        orders: [{
+          seller_id,
+          client_id,
+          created_by_ip_address,
+          session_id,
+          billing_address_id,
+          service_fee: totals.service_fee ?? 0,
+          shipping: totals.shipping ?? 0,
+          discount: totals.discount ?? 0,
+          tax: totals.tax ?? 0,
+          tax_signature: totals.tax_signature,
+          shipped_items: [shipment],
+          payments: [{
+            type: 'credit_card',
+            method: 'BraintreeCard',
+            payment_method_nonce: payment.payment_method_nonce
+          }]
+        }]
+      };
+      
+      const response = await this.client.post('/orders', body);
+      return response.data;
+    } catch (error) {
+      console.error('❌ createOrderV9 error:', error.message);
+      throw this.handleError(error);
+    }
+  }
 
   // Health check
   async healthCheck() {
