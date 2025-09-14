@@ -518,16 +518,17 @@ class CheckoutController {
 
             // Update real statistics (async, don't wait)
             try {
-                const adminController = require('./adminController');
+                const AdminController = require('./adminController');
+                const adminController = new AdminController();
 
                 // Increment tickets sold
-                adminController.incrementRealStats('tickets_sold', quantity);
+                await adminController.incrementRealStats('tickets_sold', quantity);
 
                 // Calculate money saved (simple estimate: 10% of order amount)
                 const orderAmount = retailUnitPrice * quantity + shipping + tax;
                 if (orderAmount > 0) {
                     const estimatedSavings = Math.round(orderAmount * 0.1); // 10% savings estimate
-                    adminController.incrementRealStats('money_saved', estimatedSavings);
+                    await adminController.incrementRealStats('money_saved', estimatedSavings);
                 }
             } catch (statsError) {
                 console.warn('⚠️ Failed to update statistics:', statsError.message);

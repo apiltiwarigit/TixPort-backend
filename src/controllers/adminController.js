@@ -1658,35 +1658,120 @@ class AdminController {
    */
   async getDashboardStats(req, res) {
     try {
-      // Get statistics config values
-      const { data: statsConfig, error } = await supabaseService.adminClient
-        .from('project_config')
-        .select('config_key, config_value')
-        .in('config_key', [
-          'stats_manual_likes',
-          'stats_manual_money_saved', 
-          'stats_manual_tickets_sold',
-          'stats_real_money_saved',
-          'stats_real_tickets_sold'
-        ]);
+      // Fetch all dashboard data in parallel
+      const [
+        statsConfigResult,
+        usersResult,
+        categoriesResult,
+        heroSectionsResult,
+        lastSyncResult
+      ] = await Promise.allSettled([
+        // Get statistics config values
+        supabaseService.adminClient
+          .from('project_config')
+          .select('config_key, config_value')
+          .in('config_key', [
+            'stats_manual_likes',
+            'stats_manual_money_saved', 
+            'stats_manual_tickets_sold',
+            'stats_real_money_saved',
+            'stats_real_tickets_sold'
+          ]),
+        
+        // Get total users count
+        supabaseService.adminClient
+          .from('user_roles')
+          .select('id', { count: 'exact', head: true }),
+        
+        // Get total categories count (from single JSON row - total_categories_count field)
+        supabaseService.adminClient
+          .from('categories')
+          .select('total_categories_count')
+          .eq('id', 1)
+          .single(),
+        
+        // Get hero sections count (from hero_sections table)
+        supabaseService.adminClient
+          .from('hero_sections')
+          .select('id', { count: 'exact', head: true }),
+        
+        // Get last sync time (from single JSON row last_sync_at field)
+        supabaseService.adminClient
+          .from('categories')
+          .select('last_sync_at')
+          .eq('id', 1)
+          .single()
+      ]);
 
-      if (error) {
-        console.error('Error fetching stats config:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to fetch statistics',
-          error: error.message
+      // Process statistics config
+      let config = {};
+      if (statsConfigResult.status === 'fulfilled' && !statsConfigResult.value.error) {
+        (statsConfigResult.value.data || []).forEach(item => {
+          // Handle JSONB values - they might be stored as strings or numbers
+          let value = item.config_value;
+          if (typeof value === 'string') {
+            // Try to parse as JSON first, then as number
+            try {
+              const parsed = JSON.parse(value);
+              value = typeof parsed === 'number' ? parsed : parseInt(value) || 0;
+            } catch (e) {
+              value = parseInt(value) || 0;
+            }
+          } else if (typeof value === 'number') {
+            value = value;
+          } else {
+            value = 0;
+          }
+          config[item.config_key] = value;
         });
       }
 
-      // Transform to object
-      const config = {};
-      (statsConfig || []).forEach(item => {
-        config[item.config_key] = parseInt(item.config_value) || 0;
-      });
+      // Process users count
+      let totalUsers = 0;
+      if (usersResult.status === 'fulfilled' && !usersResult.value.error) {
+        totalUsers = usersResult.value.count || 0;
+      }
+
+      // Process categories count (from single JSON row total_categories_count field)
+      let totalCategories = 0;
+      if (categoriesResult.status === 'fulfilled' && !categoriesResult.value.error && categoriesResult.value.data) {
+        totalCategories = categoriesResult.value.data.total_categories_count || 0;
+      }
+
+      // Process hero sections count
+      let heroSections = 0;
+      if (heroSectionsResult.status === 'fulfilled' && !heroSectionsResult.value.error) {
+        heroSections = heroSectionsResult.value.count || 0;
+      }
+
+      // Process last sync time (from single JSON row last_sync_at field)
+      let lastSync = 'Never';
+      if (lastSyncResult.status === 'fulfilled' && !lastSyncResult.value.error && lastSyncResult.value.data?.last_sync_at) {
+        const syncTime = new Date(lastSyncResult.value.data.last_sync_at);
+        const now = new Date();
+        const diffMs = now - syncTime;
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffDays = Math.floor(diffHours / 24);
+        
+        if (diffDays > 0) {
+          lastSync = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+        } else if (diffHours > 0) {
+          lastSync = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+        } else {
+          const diffMinutes = Math.floor(diffMs / (1000 * 60));
+          lastSync = diffMinutes > 0 ? `${diffMinutes} minutes ago` : 'Just now';
+        }
+      }
 
       // Calculate totals (manual + real)
       const stats = {
+        // Admin dashboard specific data
+        totalUsers,
+        heroSections,
+        categories: totalCategories,
+        lastSync,
+        
+        // Public statistics
         totalLikes: (config.stats_manual_likes || 0), // Only manual for now
         totalMoneySaved: (config.stats_manual_money_saved || 0) + (config.stats_real_money_saved || 0),
         totalTicketsSold: (config.stats_manual_tickets_sold || 0) + (config.stats_real_tickets_sold || 0),
@@ -1718,6 +1803,60 @@ class AdminController {
         message: 'Failed to fetch statistics',
         error: error.message
       });
+    }
+  }
+
+  /**
+   * Increment real statistics values (called from checkout)
+   */
+  async incrementRealStats(statType, value) {
+    try {
+      let configKey;
+      switch (statType) {
+        case 'tickets_sold':
+          configKey = 'stats_real_tickets_sold';
+          break;
+        case 'money_saved':
+          configKey = 'stats_real_money_saved';
+          break;
+        default:
+          console.warn(`Unknown stat type: ${statType}`);
+          return;
+      }
+
+      // Get current value
+      const { data: currentConfig, error: fetchError } = await supabaseService.adminClient
+        .from('project_config')
+        .select('config_value')
+        .eq('config_key', configKey)
+        .single();
+
+      let currentValue = 0;
+      if (!fetchError && currentConfig?.config_value !== null) {
+        currentValue = parseInt(currentConfig.config_value) || 0;
+      }
+
+      // Increment value
+      const newValue = currentValue + value;
+
+      // Update or insert the config
+      const { error: updateError } = await supabaseService.adminClient
+        .from('project_config')
+        .upsert({
+          config_key: configKey,
+          config_value: newValue.toString(),
+          description: `Real count for ${statType.replace('_', ' ')}`,
+          config_type: 'stats',
+          is_public: false
+        });
+
+      if (updateError) {
+        console.error(`Error updating real stats for ${statType}:`, updateError);
+      } else {
+        console.log(`✅ Updated real ${statType}: ${currentValue} + ${value} = ${newValue}`);
+      }
+    } catch (error) {
+      console.error(`Error in incrementRealStats for ${statType}:`, error);
     }
   }
 
